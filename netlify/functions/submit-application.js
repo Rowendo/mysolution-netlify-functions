@@ -1,18 +1,25 @@
 const multipart = require("parse-multipart");
 
-const ALLOWED_ORIGIN = "*"; // TODO: zet hier je Framer domein voor strakkere CORS
+const ALLOWED_ORIGIN = "*"; // production: vervang door je Framer domein
 const baseHeaders = {
   "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
   "Access-Control-Allow-Headers": "Content-Type",
   "Content-Type": "application/json",
 };
 
 exports.handler = async function (event) {
+  // Healthcheck / CORS preflight
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 204, headers: baseHeaders, body: "" };
   }
-
+  if (event.httpMethod === "GET") {
+    return {
+      statusCode: 200,
+      headers: baseHeaders,
+      body: JSON.stringify({ ok: true, function: "submit-application" }),
+    };
+  }
   if (event.httpMethod !== "POST") {
     return { statusCode: 405, headers: baseHeaders, body: JSON.stringify({ error: "Method not allowed" }) };
   }
@@ -63,6 +70,15 @@ exports.handler = async function (event) {
   const [firstName, ...rest] = name.split(" ");
   const lastName = rest.join(" ");
 
+  // UTM verzamelen (uit hidden fields van je form)
+  const utm = {
+    source: fields.utm_source || "",
+    medium: fields.utm_medium || "",
+    campaign: fields.utm_campaign || "",
+    term: fields.utm_term || "",
+    content: fields.utm_content || "",
+  };
+
   // --- payload richting MySolution (pas veldnamen aan indien nodig)
   const msBody = {
     vacancyId: vacatureId,
@@ -78,7 +94,8 @@ exports.handler = async function (event) {
     meta: {
       pageTitle: fields.page_title || "",
       pageUrl: fields.page_url || ""
-    }
+    },
+    utm, // <-- toegevoegd
   };
 
   if (cvBase64 && cvFilename) {
@@ -94,6 +111,14 @@ exports.handler = async function (event) {
   }
 
   const url = endpointTpl.replace("{vacatureId}", encodeURIComponent(vacatureId));
+
+  // Kleine, veilige log voor troubleshooting (zie Netlify → Functions → Logs)
+  console.log("[submit-application] POST", {
+    vacancyId: vacatureId,
+    email,
+    hasCV: Boolean(cvBase64),
+    utm,
+  });
 
   try {
     const upstream = await fetch(url, {
@@ -112,6 +137,7 @@ exports.handler = async function (event) {
       body: text || JSON.stringify({ ok: upstream.ok })
     };
   } catch (err) {
+    console.error("[submit-application] Upstream failure:", err?.message);
     return {
       statusCode: 500,
       headers: baseHeaders,
