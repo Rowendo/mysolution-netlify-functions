@@ -1,0 +1,9 @@
+{
+  "name": "mysolution-netlify-functions",
+  "version": "1.0.0",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "parse-multipart": "^1.0.4"
+  }
+}
