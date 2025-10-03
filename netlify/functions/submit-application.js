@@ -154,9 +154,17 @@ const crypto = require("crypto");
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
-function readPemFromEnv(name) {
-  const raw = process.env[name] || "";
-  // If pasted as single line with \n, convert back
+// Prefer base64 var (bulletproof against newline issues), then plaintext var
+function readPrivateKeyPemFromEnv() {
+  const b64 = process.env.SF_JWT_PRIVATE_KEY_B64;
+  if (b64) {
+    try {
+      return Buffer.from(b64, "base64").toString("utf8");
+    } catch {
+      /* fall through to plaintext var */
+    }
+  }
+  const raw = process.env.SF_JWT_PRIVATE_KEY || "";
   return raw.includes("\\n") ? raw.replace(/\\n/g, "\n") : raw;
 }
 
@@ -192,13 +200,13 @@ async function getSalesforceAccessTokenJWT() {
     .replace(/\/services.*$/i, "")
     .replace(/\/+$/, ""); // normalize
 
-  const clientId = process.env.SF_CLIENT_ID; // Consumer Key
-  const subject = process.env.SF_JWT_SUBJECT; // user email
-  const privateKeyPem = readPemFromEnv("SF_JWT_PRIVATE_KEY");
+  const clientId = process.env.SF_CLIENT_ID;      // Consumer Key
+  const subject  = process.env.SF_JWT_SUBJECT;    // user email
+  const privateKeyPem = readPrivateKeyPemFromEnv();
 
   if (!clientId || !subject || !privateKeyPem) {
     throw new Error(
-      "JWT env vars missing: SF_CLIENT_ID / SF_JWT_SUBJECT / SF_JWT_PRIVATE_KEY"
+      "JWT env vars missing: SF_CLIENT_ID / SF_JWT_SUBJECT / SF_JWT_PRIVATE_KEY(_B64)"
     );
   }
 
@@ -206,7 +214,7 @@ async function getSalesforceAccessTokenJWT() {
   const header = { alg: "RS256" };
   const claims = {
     iss: clientId, // connected app client id
-    sub: subject, // integration user
+    sub: subject,  // integration user
     aud: loginUrl, // MUST match login host exactly
     exp: nowSeconds() + 180, // 3 minutes
   };
@@ -228,10 +236,7 @@ async function getSalesforceAccessTokenJWT() {
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(
-      `Failed to fetch Salesforce JWT token (${res.status}): ${txt.slice(
-        0,
-        800
-      )}`
+      `Failed to fetch Salesforce JWT token (${res.status}): ${txt.slice(0, 800)}`
     );
   }
 
