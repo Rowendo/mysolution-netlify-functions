@@ -203,53 +203,37 @@ exports.handler = async function (event) {
 const crypto = require("crypto");
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
-function normalizePem(pem) {
-  if (!pem) return "";
-  let s = pem.trim();
-  // Strip accidental wrapping quotes
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-    s = s.slice(1, -1);
-  }
-  // Unescape \n and normalize CRLF
-  s = s.replace(/\\n/g, "\n").replace(/\r\n/g, "\n");
-  // Ensure final newline
+function normalizePem(raw) {
+  if (!raw) return "";
+  let s = String(raw);
+  s = s.replace(/^["']|["']$/g, "");      // strip accidental wrapping quotes
+  s = s.replace(/\\n/g, "\n");            // turn \n into real newlines
+  s = s.replace(/\r\n/g, "\n");           // CRLF -> LF
   if (!s.endsWith("\n")) s += "\n";
   return s;
 }
 
 function readPrivateKeyPemFromEnv() {
-  // Prefer plain PEM
-  const plain = process.env.SF_JWT_PRIVATE_KEY || "";
-  if (plain && plain.includes("BEGIN")) {
-    return normalizePem(plain);
-  }
-  // Fallback: base64
-  const b64 = (process.env.SF_JWT_PRIVATE_KEY_B64 || "").trim();
+  const b64 = process.env.SF_JWT_PRIVATE_KEY_B64;
   if (b64) {
     try {
       const decoded = Buffer.from(b64, "base64").toString("utf8");
-      if (decoded.includes("BEGIN")) return normalizePem(decoded);
-    } catch {
-      // ignore
-    }
+      return normalizePem(decoded);
+    } catch {}
   }
-  return "";
+  return normalizePem(process.env.SF_JWT_PRIVATE_KEY || "");
 }
 
 function parsePrivateKey(pem) {
   try {
     return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs8" });
-  } catch {
-    return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs1" });
+  } catch (ePkcs8) {
+    try {
+      return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs1" });
+    } catch (ePkcs1) {
+      throw new Error("Unsupported private key format");
+    }
   }
-}
-
-function b64u(obj) {
-  return Buffer.from(JSON.stringify(obj))
-    .toString("base64")
-    .replace(/=/g, "")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
 }
 
 function signJWT({ header, claims, privateKeyPem }) {
