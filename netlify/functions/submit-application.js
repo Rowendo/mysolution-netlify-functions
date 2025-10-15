@@ -76,7 +76,11 @@ exports.handler = async function (event) {
     return {
       statusCode: 200,
       headers: baseHeaders,
-      body: JSON.stringify({ ok: true, fn: "submit-application" }),
+      body: JSON.stringify({
+        ok: true,
+        fn: "submit-application",
+        url: "https://idyllic-clafoutis-89e556.netlify.app/.netlify/functions/submit-application",
+      }),
     };
   }
 
