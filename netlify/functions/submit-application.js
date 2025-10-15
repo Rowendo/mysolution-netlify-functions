@@ -225,36 +225,16 @@ function readPrivateKeyPemFromEnv() {
 }
 
 function parsePrivateKey(pem) {
-  // 0) quick sanity
-  if (!pem || !/BEGIN (RSA )?PRIVATE KEY/.test(pem)) {
-    throw new Error("Private key missing or header not found");
-  }
+  // Try auto-detect first (Node can often figure it out)
+  try { return crypto.createPrivateKey(pem); } catch (e1) {}
 
-  try {
-    // Let Node auto-detect (handles PKCS#1/PKCS#8 PEM, unencrypted)
-    return crypto.createPrivateKey(pem);
-  } catch (eAuto) {
-    try {
-      // Try explicit PEM without forcing type
-      return crypto.createPrivateKey({ key: pem, format: "pem" });
-    } catch (ePem) {
-      try {
-        // Fallbacks if the above still fails
-        return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs8" });
-      } catch (ePkcs8) {
-        try {
-          return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs1" });
-        } catch (ePkcs1) {
-          // Surface a useful reason
-          const hint =
-            pem.includes("ENCRYPTED") || /Proc-Type:\s*4,ENCRYPTED/i.test(pem)
-              ? " (looks encrypted — must be unencrypted)"
-              : "";
-          throw new Error("Unsupported private key format" + hint);
-        }
-      }
-    }
-  }
+  // Then try explicit PKCS8
+  try { return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs8" }); } catch (e2) {}
+
+  // Then try explicit PKCS1 (RSA)
+  try { return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs1" }); } catch (e3) {}
+
+  throw new Error("Unsupported private key format");
 }
 
 function b64u(obj) {
