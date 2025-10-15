@@ -236,6 +236,14 @@ function parsePrivateKey(pem) {
   }
 }
 
+function b64u(obj) {
+  return Buffer.from(JSON.stringify(obj))
+    .toString("base64")
+    .replace(/=/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+}
+
 function signJWT({ header, claims, privateKeyPem }) {
   const toSign = `${b64u(header)}.${b64u(claims)}`;
   const keyObj = parsePrivateKey(privateKeyPem);
