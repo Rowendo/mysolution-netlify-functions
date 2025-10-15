@@ -111,8 +111,8 @@ exports.handler = async function (event) {
   const qsId = (event.queryStringParameters?.id || "").trim();
   const vacatureId =
     (fields.vacatureID || fields.vacancyId || fields.jobId || qsId || "").trim();
-  const email = (fields.email || "").trim();
-  const name = (fields.name || "").trim();
+  const email = (fields.email || fields.Email || "").trim();
+  const name = (fields.name || fields.Naam || "").trim();
 
   if (!vacatureId || !email || !name) {
     return {
@@ -129,20 +129,34 @@ exports.handler = async function (event) {
     };
   }
 
-  // Split name (defensive)
-  const [firstName, ...rest] = String(name || "").trim().split(/\s+/);
-  const lastName = rest.join(" ");
+  // Split name into Voornaam / Tussenvoegsels / Achternaam (like the WP code)
+  const parts = String(name).trim().split(/\s+/);
+  const firstName = parts.shift() || "";
+  const lastName = parts.length ? parts.pop() : "";
+  const tussenvoegsels = parts.join(" ");
 
-  // Payload for Apex REST — support BOTH shapes (flat + nested)
+  const phone =
+    (fields.phone || fields.telefoon || fields.telefoonnummer || fields["Mobiel_nummer"] || "")
+      .toString()
+      .trim();
+  const utm =
+    (fields.utm || fields.utm_source || fields.utmSource || fields["form-field-utm"] || "")
+      .toString()
+      .trim();
+
+  // === THIS mirrors the legacy WordPress payload exactly ===
   const msBody = {
-    // flat variant
-    vacancyId: vacatureId,
-    jobId: vacatureId,
-    firstName,
-    lastName,
-    email,
-    // nested variant
-    candidate: { firstName, lastName, email },
+    setApiName: "default",        // must match Portal Controller Name (Active, RT=SFJobApplicationController)
+    status: "Application",
+    utm_source: utm,
+    fields: {
+      Voornaam:         { value: firstName },
+      Tussenvoegsels:   { value: tussenvoegsels },
+      Achternaam:       { value: lastName },
+      Email:            { value: email },
+      Mobiel_nummer:    { value: phone },
+      PrivacyAgreement: { value: "true" },
+    },
   };
 
   // Build target URL (env supports {vacatureId})
@@ -164,7 +178,8 @@ exports.handler = async function (event) {
           debug: true,
           url: targetUrl,
           msBody,
-          note: "This is a dry-run echo. Remove debug=1 to post upstream.",
+          note:
+            "This echoes the exact payload the Apex expects (WordPress format). Remove debug=1 to post upstream.",
         },
         null,
         2
@@ -211,7 +226,6 @@ exports.handler = async function (event) {
 
     const text = await upstream.text();
 
-    // If Apex returns HTML or an empty body on error, wrap a clearer message
     if (!upstream.ok) {
       return {
         statusCode: upstream.status,
@@ -250,9 +264,9 @@ const nowSeconds = () => Math.floor(Date.now() / 1000);
 function normalizePem(raw) {
   if (!raw) return "";
   let s = String(raw);
-  s = s.replace(/^["']|["']$/g, ""); // strip accidental wrapping quotes
-  s = s.replace(/\\n/g, "\n"); // turn \n into real newlines
-  s = s.replace(/\r\n/g, "\n"); // CRLF -> LF
+  s = s.replace(/^["']|["']$/g, "");
+  s = s.replace(/\\n/g, "\n");
+  s = s.replace(/\r\n/g, "\n");
   if (!s.endsWith("\n")) s += "\n";
   return s;
 }
@@ -269,21 +283,9 @@ function readPrivateKeyPemFromEnv() {
 }
 
 function parsePrivateKey(pem) {
-  // Try auto-detect first (Node can often figure it out)
-  try {
-    return crypto.createPrivateKey(pem);
-  } catch (e1) {}
-
-  // Then try explicit PKCS8
-  try {
-    return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs8" });
-  } catch (e2) {}
-
-  // Then try explicit PKCS1 (RSA)
-  try {
-    return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs1" });
-  } catch (e3) {}
-
+  try { return crypto.createPrivateKey(pem); } catch (e1) {}
+  try { return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs8" }); } catch (e2) {}
+  try { return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs1" }); } catch (e3) {}
   throw new Error("Unsupported private key format");
 }
 
@@ -315,8 +317,8 @@ async function getSalesforceAccessTokenJWT() {
     .replace(/\/services.*$/i, "")
     .replace(/\/+$/, "");
 
-  const clientId = process.env.SF_CLIENT_ID; // Connected App Consumer Key
-  const subject = process.env.SF_JWT_SUBJECT; // Integration user (email/username)
+  const clientId = process.env.SF_CLIENT_ID;     // Connected App Consumer Key
+  const subject = process.env.SF_JWT_SUBJECT;    // Integration user (email/username)
   const privateKeyPem = readPrivateKeyPemFromEnv();
 
   if (!clientId || !subject || !privateKeyPem) {
@@ -330,7 +332,7 @@ async function getSalesforceAccessTokenJWT() {
     iss: clientId,
     sub: subject,
     aud: loginUrl,
-    exp: nowSeconds() + 120, // 2 minutes (avoid skew)
+    exp: nowSeconds() + 120, // Keep short to avoid clock skew
   };
   const assertion = signJWT({ header, claims, privateKeyPem });
 
@@ -348,10 +350,8 @@ async function getSalesforceAccessTokenJWT() {
 
   if (!res.ok) {
     const txt = await res.text();
-    throw new Error(
-      `Failed to fetch Salesforce JWT token (${res.status}): ${txt.slice(0, 800)}`
-    );
-  }
+    throw new Error(`Failed to fetch Salesforce JWT token (${res.status}): ${txt.slice(0, 800)}`);
+    }
 
   const json = await res.json(); // { access_token, instance_url, ... }
   _cachedToken = {
