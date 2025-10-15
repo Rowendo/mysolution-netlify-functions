@@ -30,10 +30,12 @@ exports.handler = async function (event) {
         has_subject: !!process.env.SF_JWT_SUBJECT,
         has_key_b64: !!process.env.SF_JWT_PRIVATE_KEY_B64,
         has_key_plain: !!process.env.SF_JWT_PRIVATE_KEY,
-        login_url: (process.env.SF_LOGIN_URL || "https://login.salesforce.com").replace(
-          /\/services.*$/i,
-          ""
-        ),
+        login_url: (process.env.SF_LOGIN_URL || "https://login.salesforce.com")
+          .replace(/\/services.*$/i, "")
+          .replace(/\/+$/, ""),
+        endpoint_tpl:
+          process.env.MYSOLUTION_ENDPOINT ||
+          "https://freelancersunited.my.salesforce.com/services/apexrest/msf/api/job/Apply?id={vacatureId}",
       }),
     };
   }
@@ -105,8 +107,10 @@ exports.handler = async function (event) {
     };
   }
 
-  // Minimal validation
-  const vacatureId = (fields.vacatureID || "").trim();
+  // Accept vacatureID from body or id from query (and trim)
+  const qsId = (event.queryStringParameters?.id || "").trim();
+  const vacatureId =
+    (fields.vacatureID || fields.vacancyId || fields.jobId || qsId || "").trim();
   const email = (fields.email || "").trim();
   const name = (fields.name || "").trim();
 
@@ -116,18 +120,28 @@ exports.handler = async function (event) {
       headers: baseHeaders,
       body: JSON.stringify({
         error: "Missing required fields",
-        needed: { vacatureID: !!vacatureId, email: !!email, name: !!name },
+        needed: {
+          vacatureID_or_id: !!vacatureId,
+          email: !!email,
+          name: !!name,
+        },
       }),
     };
   }
 
-  // Split name
-  const [firstName, ...rest] = name.split(" ");
+  // Split name (defensive)
+  const [firstName, ...rest] = String(name || "").trim().split(/\s+/);
   const lastName = rest.join(" ");
 
-  // Payload for Apex REST
+  // Payload for Apex REST — support BOTH shapes (flat + nested)
   const msBody = {
+    // flat variant
     vacancyId: vacatureId,
+    jobId: vacatureId,
+    firstName,
+    lastName,
+    email,
+    // nested variant
     candidate: { firstName, lastName, email },
   };
 
@@ -145,7 +159,16 @@ exports.handler = async function (event) {
     return {
       statusCode: 200,
       headers: baseHeaders,
-      body: JSON.stringify({ debug: true, url: targetUrl, msBody }, null, 2),
+      body: JSON.stringify(
+        {
+          debug: true,
+          url: targetUrl,
+          msBody,
+          note: "This is a dry-run echo. Remove debug=1 to post upstream.",
+        },
+        null,
+        2
+      ),
     };
   }
 
@@ -153,8 +176,8 @@ exports.handler = async function (event) {
     // 1) Get JWT access token (cached)
     const { access_token, instance_url } = await getSalesforceAccessTokenJWT();
 
-    // 2) Use explicit env endpoint if it’s already a Salesforce host, else derive from instance_url
-    const apexUrl = /:\/\/[^/]*\.my\.salesforce\.com/i.test(targetUrl)
+    // 2) Derive apex URL if env endpoint wasn't already a SF host
+    const apexUrl = /:\/\/[^/]*\.salesforce\.com/i.test(targetUrl)
       ? targetUrl
       : `${instance_url.replace(/\/+$/, "")}/services/apexrest/msf/api/job/Apply?id=${encodeURIComponent(
           vacatureId
@@ -165,6 +188,7 @@ exports.handler = async function (event) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Accept: "application/json",
         Authorization: `Bearer ${access_token}`,
       },
       body: JSON.stringify(msBody),
@@ -178,6 +202,7 @@ exports.handler = async function (event) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Accept: "application/json",
           Authorization: `Bearer ${fresh.access_token}`,
         },
         body: JSON.stringify(msBody),
@@ -185,16 +210,35 @@ exports.handler = async function (event) {
     }
 
     const text = await upstream.text();
+
+    // If Apex returns HTML or an empty body on error, wrap a clearer message
+    if (!upstream.ok) {
+      return {
+        statusCode: upstream.status,
+        headers: baseHeaders,
+        body:
+          text ||
+          JSON.stringify({
+            ok: false,
+            error: "Salesforce Apex call failed",
+            apexUrl,
+          }),
+      };
+    }
+
     return {
       statusCode: upstream.status,
       headers: baseHeaders,
-      body: text || JSON.stringify({ ok: upstream.ok }),
+      body: text || JSON.stringify({ ok: true }),
     };
   } catch (err) {
     return {
       statusCode: 500,
       headers: baseHeaders,
-      body: JSON.stringify({ error: "Upstream failure", detail: err?.message }),
+      body: JSON.stringify({
+        error: "Upstream failure",
+        detail: err?.message,
+      }),
     };
   }
 };
@@ -206,9 +250,9 @@ const nowSeconds = () => Math.floor(Date.now() / 1000);
 function normalizePem(raw) {
   if (!raw) return "";
   let s = String(raw);
-  s = s.replace(/^["']|["']$/g, "");      // strip accidental wrapping quotes
-  s = s.replace(/\\n/g, "\n");            // turn \n into real newlines
-  s = s.replace(/\r\n/g, "\n");           // CRLF -> LF
+  s = s.replace(/^["']|["']$/g, ""); // strip accidental wrapping quotes
+  s = s.replace(/\\n/g, "\n"); // turn \n into real newlines
+  s = s.replace(/\r\n/g, "\n"); // CRLF -> LF
   if (!s.endsWith("\n")) s += "\n";
   return s;
 }
@@ -226,13 +270,19 @@ function readPrivateKeyPemFromEnv() {
 
 function parsePrivateKey(pem) {
   // Try auto-detect first (Node can often figure it out)
-  try { return crypto.createPrivateKey(pem); } catch (e1) {}
+  try {
+    return crypto.createPrivateKey(pem);
+  } catch (e1) {}
 
   // Then try explicit PKCS8
-  try { return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs8" }); } catch (e2) {}
+  try {
+    return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs8" });
+  } catch (e2) {}
 
   // Then try explicit PKCS1 (RSA)
-  try { return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs1" }); } catch (e3) {}
+  try {
+    return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs1" });
+  } catch (e3) {}
 
   throw new Error("Unsupported private key format");
 }
@@ -265,8 +315,8 @@ async function getSalesforceAccessTokenJWT() {
     .replace(/\/services.*$/i, "")
     .replace(/\/+$/, "");
 
-  const clientId = process.env.SF_CLIENT_ID;     // Connected App Consumer Key
-  const subject = process.env.SF_JWT_SUBJECT;    // Integration user (email/username)
+  const clientId = process.env.SF_CLIENT_ID; // Connected App Consumer Key
+  const subject = process.env.SF_JWT_SUBJECT; // Integration user (email/username)
   const privateKeyPem = readPrivateKeyPemFromEnv();
 
   if (!clientId || !subject || !privateKeyPem) {
@@ -280,7 +330,7 @@ async function getSalesforceAccessTokenJWT() {
     iss: clientId,
     sub: subject,
     aud: loginUrl,
-    exp: nowSeconds() + 180, // 3 minutes
+    exp: nowSeconds() + 120, // 2 minutes (avoid skew)
   };
   const assertion = signJWT({ header, claims, privateKeyPem });
 
@@ -298,7 +348,9 @@ async function getSalesforceAccessTokenJWT() {
 
   if (!res.ok) {
     const txt = await res.text();
-    throw new Error(`Failed to fetch Salesforce JWT token (${res.status}): ${txt.slice(0, 800)}`);
+    throw new Error(
+      `Failed to fetch Salesforce JWT token (${res.status}): ${txt.slice(0, 800)}`
+    );
   }
 
   const json = await res.json(); // { access_token, instance_url, ... }
