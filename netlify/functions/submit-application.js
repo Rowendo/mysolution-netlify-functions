@@ -217,24 +217,37 @@ exports.handler = async function (event) {
     }
   }
 
-  // === WordPress-style payload + LinkedIn + CV ===
-  const msBody = {
-    setApiName: "default",
-    status: "Application",
-    utm_source: utm,
-    fields: {
-      Voornaam:         { value: firstName },
-      Tussenvoegsels:   { value: tussenvoegsels },
-      Achternaam:       { value: lastName },
-      Email:            { value: email },
-      Mobiel_nummer:    { value: phone },
-      PrivacyAgreement: { value: "true" },
-      ...(linkedin ? { FU_Linkedin_profiel__c: { value: linkedin } } : {}),
-    },
-    ...(cv ? { cv } : {}),
-    ...(cv ? { attachments: [cv] } : {}), // extra kanalen voor compat.
-    ...(cv ? { files: [cv] } : {}),
-  };
+  // === Payload naar MySolution/Apex ===
+const cleanBase64 = cv ? (cv.base64 || "").replace(/^data:.*?;base64,/, "") : "";
+const fileName    = cv ? (cv.fileName || "cv") : "";
+
+const msBody = {
+  setApiName: "default",
+  status: "Application",
+  utm_source: utm,
+  fields: {
+    Voornaam:         { value: firstName },
+    Tussenvoegsels:   { value: tussenvoegsels },
+    Achternaam:       { value: lastName },
+    Email:            { value: email },
+    Mobiel_nummer:    { value: phone },
+    PrivacyAgreement: { value: "true" },
+    ...(linkedin ? { FU_Linkedin_profiel__c: { value: linkedin } } : {}),
+
+    // 🔴 BELANGRIJK: exact zoals in je WP-voorbeeld
+    ...(cv ? { CV: { value: cleanBase64, fileName } } : {}),
+  },
+
+  // Mag je laten staan als “fallback” (kan geen kwaad),
+  // maar strikt genomen niet nodig als jouw Apex precies fields.CV verwacht.
+  ...(cv ? { cv } : {}),
+  ...(cv ? { attachments: [cv] } : {}),
+  ...(cv ? { files: [cv] } : {}),
+
+  // Desgewenst extra aliassen (optioneel):
+  // ...(cv ? { documents: [{ filename: fileName, base64: cleanBase64, contentType: cv.contentType || "application/octet-stream" }] } : {}),
+  // ...(cv ? { contentVersions: [{ Title: fileName.replace(/\.[^.]+$/, "") || "cv", VersionData: cleanBase64, PathOnClient: fileName, ContentType: cv.contentType || "application/octet-stream" }] } : {}),
+};
 
   // Build target URL (env supports {vacatureId})
   const endpointTpl =
