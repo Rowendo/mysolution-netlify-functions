@@ -198,7 +198,7 @@ exports.handler = async function (event) {
 
   // LinkedIn accepteren en mappen naar exact MySolution veld
   const linkedin =
-    (fields.msf_Linkedin_URL_c || fields.msf__Linkedin_URL__c || fields.linkedin || fields.LinkedIn || "")
+    (fields.FU_Linkedin_profiel__c || fields.FU_Linkedin_profiel__c || fields.linkedin || fields.LinkedIn || "")
       .toString()
       .trim();
 
