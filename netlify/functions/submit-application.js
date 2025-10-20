@@ -222,7 +222,7 @@ exports.handler = async function (event) {
       Email:            { value: email },
       Mobiel_nummer:    { value: phone },
       PrivacyAgreement: { value: "true" },
-      ...(linkedin ? { msf_Linkedin_URL_c: { value: linkedin } } : {}),
+      ...(linkedin ? { msf__Linkedin_URL__c: { value: linkedin } } : {}),
     },
     ...(cv ? { cv } : {}),
     ...(cv ? { attachments: [cv] } : {}), // extra kanalen voor compat.
