@@ -18,7 +18,12 @@ async function notifyTeamEmail({ name, email, phone, linkedin, vacatureId, cv })
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
   const from = process.env.MAIL_FROM || "no-reply@localhost";
-  const to = process.env.MAIL_TO || "we@freelancersunitd.nl";
+
+  // Meerdere ontvangers via komma-gescheiden lijst
+  const toEnv = process.env.MAIL_TO || "we@freelancersunitd.nl";
+  const to = toEnv.includes(",")
+    ? toEnv.split(",").map((s) => s.trim()).filter(Boolean)
+    : toEnv;
 
   if (!host || !user || !pass) {
     console.warn("SMTP env missing; skipping email");
@@ -58,7 +63,8 @@ async function notifyTeamEmail({ name, email, phone, linkedin, vacatureId, cv })
       ? [
           {
             filename: cv.fileName || "cv",
-            content: cv.base64,
+            // Defensief: strip een eventuele data-URL prefix
+            content: (cv.base64 || "").replace(/^data:.*?;base64,/, ""),
             encoding: "base64",
             contentType: cv.contentType || "application/octet-stream",
           },
@@ -197,15 +203,16 @@ exports.handler = async function (event) {
       .trim();
 
   // CV (optioneel): { fileName, contentType, base64 }
+  const MAX_BYTES = 5 * 1024 * 1024; // 5MB
   const cv = fields.cv && typeof fields.cv === "object" ? fields.cv : null;
   if (cv) {
     const okShape = cv.fileName && cv.contentType && cv.base64;
     if (!okShape) {
       return { statusCode: 422, headers: baseHeaders, body: JSON.stringify({ error: "CV object invalid" }) };
     }
-    // ~5MB check
+    // ~5MB check (base64->bytes)
     const approxBytes = Math.floor((cv.base64.length * 3) / 4);
-    if (approxBytes > 5 * 1024 * 1024) {
+    if (approxBytes > MAX_BYTES) {
       return { statusCode: 413, headers: baseHeaders, body: JSON.stringify({ error: "CV > 5MB" }) };
     }
   }
