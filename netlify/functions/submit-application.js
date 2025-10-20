@@ -1,10 +1,9 @@
 // netlify/functions/submit-application.js
 
-/* =================== CORS / headers =================== */
 const baseHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, Accept, Authorization, X-Requested-With",
   "Content-Type": "application/json",
 };
 
