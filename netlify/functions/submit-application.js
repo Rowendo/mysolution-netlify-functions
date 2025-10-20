@@ -1,3 +1,5 @@
+// netlify/functions/submit-application.js
+
 /* =================== CORS / headers =================== */
 const baseHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,7 +18,7 @@ exports.handler = async function (event) {
     return { statusCode: 204, headers: baseHeaders, body: "" };
   }
 
-  // ---------- Lightweight diagnostics ----------
+  /* ---------- DEBUG: environment presence (safe) ---------- */
   if (event.httpMethod === "GET" && event.queryStringParameters?.env === "1") {
     return {
       statusCode: 200,
@@ -37,19 +39,59 @@ exports.handler = async function (event) {
       }),
     };
   }
+
+  /* ---------- DEBUG: key shape (no secrets) ---------- */
+  if (event.httpMethod === "GET" && event.queryStringParameters?.keyinfo === "1") {
+    const pem = readPrivateKeyPemFromEnv();
+    return {
+      statusCode: 200,
+      headers: baseHeaders,
+      body: JSON.stringify({
+        present: !!pem,
+        length: pem ? pem.length : 0,
+        beginsWith: pem ? pem.slice(0, 30) : null,
+        headerDetected: pem
+          ? pem.includes("BEGIN PRIVATE KEY") || pem.includes("BEGIN RSA PRIVATE KEY")
+          : false,
+      }),
+    };
+  }
+
+  /* ---------- DEBUG: key parse test ---------- */
+  if (event.httpMethod === "GET" && event.queryStringParameters?.keytest === "1") {
+    try {
+      const pem = readPrivateKeyPemFromEnv();
+      if (!pem) throw new Error("no key read from env");
+      parsePrivateKey(pem); // throws if invalid
+      return { statusCode: 200, headers: baseHeaders, body: JSON.stringify({ ok: true }) };
+    } catch (e) {
+      return {
+        statusCode: 500,
+        headers: baseHeaders,
+        body: JSON.stringify({ ok: false, error: String(e.message) }),
+      };
+    }
+  }
+
+  /* ---------- Simple GET “is alive” ---------- */
   if (event.httpMethod === "GET") {
     return {
       statusCode: 200,
       headers: baseHeaders,
-      body: JSON.stringify({ ok: true, fn: "submit-application" }),
+      body: JSON.stringify({
+        ok: true,
+        fn: "submit-application",
+        url: "https://idyllic-clafoutis-89e556.netlify.app/.netlify/functions/submit-application",
+      }),
     };
   }
 
+  /* ---------- POST flow ---------- */
   if (event.httpMethod !== "POST") {
     return { statusCode: 405, headers: baseHeaders, body: JSON.stringify({ error: "Method not allowed" }) };
   }
 
-  // -------- Parse body --------
+  // Parse body
   let fields = {};
   try {
     fields = JSON.parse(event.body || "{}");
@@ -57,11 +99,12 @@ exports.handler = async function (event) {
     return { statusCode: 400, headers: baseHeaders, body: JSON.stringify({ error: "Invalid body" }) };
   }
 
-  // Required basics
+  // Accept vacatureID from body or id from query (and trim)
   const qsId = (event.queryStringParameters?.id || "").trim();
   const vacatureId = (fields.vacatureID || fields.vacancyId || fields.jobId || qsId || "").trim();
   const email = (fields.email || fields.Email || "").trim();
   const name = (fields.name || fields.Naam || "").trim();
+
   if (!vacatureId || !email || !name) {
     return {
       statusCode: 422,
@@ -73,7 +116,12 @@ exports.handler = async function (event) {
     };
   }
 
-  // Optional fields
+  // Split name into Voornaam / Tussenvoegsels / Achternaam (like the WP code)
+  const parts = String(name).trim().split(/\s+/);
+  const firstName = parts.shift() || "";
+  const lastName = parts.length ? parts.pop() : "";
+  const tussenvoegsels = parts.join(" ");
+
   const phone =
     (fields.phone || fields.telefoon || fields.telefoonnummer || fields["Mobiel_nummer"] || "")
       .toString()
@@ -103,15 +151,9 @@ exports.handler = async function (event) {
     }
   }
 
-  // Naam opdelen naar Voornaam / Tussenvoegsels / Achternaam
-  const parts = String(name).trim().split(/\s+/);
-  const firstName = parts.shift() || "";
-  const lastName = parts.length ? parts.pop() : "";
-  const tussenvoegsels = parts.join(" ");
-
-  // -------- Build MySolution payload --------
+  // === Mirrors legacy WordPress payload, + LinkedIn + CV (robust) ===
   const msBody = {
-    setApiName: "default",         // Portal Controller Name
+    setApiName: "default",        // Portal Controller Name (Active, RT=SFJobApplicationController)
     status: "Application",
     utm_source: utm,
     fields: {
@@ -122,43 +164,55 @@ exports.handler = async function (event) {
       Mobiel_nummer:    { value: phone },
       PrivacyAgreement: { value: "true" },
 
-      // ✅ Stuur LinkedIn in het exacte MySolution veld
+      // ✅ exact MySolution veld
       ...(linkedin ? { msf_Linkedin_URL_c: { value: linkedin } } : {}),
     },
 
-    // ✅ Stuur CV door (Apex/Portal moet dit opslaan als ContentVersion/Attachment)
+    // ✅ CV meesturen op meerdere manieren, zoals veel WP→Apex controllers verwachten
     ...(cv ? { cv } : {}),
+    ...(cv ? { attachments: [cv] } : {}),
+    ...(cv ? { files: [cv] } : {}),
   };
 
-  // Target URL
+  // Build target URL (env supports {vacatureId})
   const endpointTpl =
     process.env.MYSOLUTION_ENDPOINT ||
     "https://freelancersunited.my.salesforce.com/services/apexrest/msf/api/job/Apply?id={vacatureId}";
   const targetUrl = endpointTpl.replace("{vacatureId}", encodeURIComponent(vacatureId));
 
-  // Debug echo
+  // Debug echo (no upstream)
   const isDebug =
     (event.queryStringParameters && event.queryStringParameters.debug === "1") || fields.debug === "1";
   if (isDebug) {
     return {
       statusCode: 200,
       headers: baseHeaders,
-      body: JSON.stringify({ debug: true, url: targetUrl, msBody }, null, 2),
+      body: JSON.stringify(
+        {
+          debug: true,
+          url: targetUrl,
+          msBody,
+          note:
+            "This echoes the exact payload the Apex expects (WordPress style + LinkedIn + CV). Remove debug=1 to post upstream.",
+        },
+        null,
+        2
+      ),
     };
   }
 
   try {
-    // 1) JWT token
+    // 1) Get JWT access token (cached)
     const { access_token, instance_url } = await getSalesforceAccessTokenJWT();
 
-    // 2) Apex URL fallback naar instance_url indien nodig
+    // 2) Derive apex URL if env endpoint wasn't already a SF host
     const apexUrl = /:\/\/[^/]*\.salesforce\.com/i.test(targetUrl)
       ? targetUrl
       : `${instance_url.replace(/\/+$/, "")}/services/apexrest/msf/api/job/Apply?id=${encodeURIComponent(
           vacatureId
         )}`;
 
-    // 3) POST naar Apex
+    // 3) POST to Apex REST
     let upstream = await fetch(apexUrl, {
       method: "POST",
       headers: {
@@ -169,6 +223,7 @@ exports.handler = async function (event) {
       body: JSON.stringify(msBody),
     });
 
+    // Retry once on 401 (expired token)
     if (upstream.status === 401) {
       _cachedToken = null;
       const fresh = await getSalesforceAccessTokenJWT();
@@ -184,10 +239,22 @@ exports.handler = async function (event) {
     }
 
     const text = await upstream.text();
+
     if (!upstream.ok) {
-      return { statusCode: upstream.status, headers: baseHeaders, body: text || JSON.stringify({ ok: false }) };
+      return {
+        statusCode: upstream.status,
+        headers: baseHeaders,
+        body:
+          text ||
+          JSON.stringify({ ok: false, error: "Salesforce Apex call failed", apexUrl }),
+      };
     }
-    return { statusCode: upstream.status, headers: baseHeaders, body: text || JSON.stringify({ ok: true }) };
+
+    return {
+      statusCode: upstream.status,
+      headers: baseHeaders,
+      body: text || JSON.stringify({ ok: true }),
+    };
   } catch (err) {
     return {
       statusCode: 500,
@@ -198,7 +265,8 @@ exports.handler = async function (event) {
 };
 
 /* =================== JWT helpers =================== */
-const crypto = require("crypto");
+// NOTE: use explicit Node built-in to avoid polyfills during bundling
+const crypto = require("node:crypto");
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
 function normalizePem(raw) {
@@ -240,19 +308,27 @@ function signJWT({ header, claims, privateKeyPem }) {
   return `${toSign}.${sig}`;
 }
 async function getSalesforceAccessTokenJWT() {
+  // reuse cached token if >30s left
   if (_cachedToken && _cachedToken.exp > nowSeconds() + 30) return _cachedToken;
 
   const loginUrl = (process.env.SF_LOGIN_URL || "https://login.salesforce.com")
     .replace(/\/services.*$/i, "").replace(/\/+$/, "");
-  const clientId = process.env.SF_CLIENT_ID;
-  const subject = process.env.SF_JWT_SUBJECT;
+
+  const clientId = process.env.SF_CLIENT_ID;     // Connected App Consumer Key
+  const subject = process.env.SF_JWT_SUBJECT;    // Integration user (email/username)
   const privateKeyPem = readPrivateKeyPemFromEnv();
+
   if (!clientId || !subject || !privateKeyPem) {
     throw new Error("JWT env vars missing: SF_CLIENT_ID / SF_JWT_SUBJECT / SF_JWT_PRIVATE_KEY(_B64)");
   }
 
   const header = { alg: "RS256" };
-  const claims = { iss: clientId, sub: subject, aud: loginUrl, exp: nowSeconds() + 120 };
+  const claims = {
+    iss: clientId,
+    sub: subject,
+    aud: loginUrl,
+    exp: nowSeconds() + 120, // Keep short to avoid clock skew
+  };
   const assertion = signJWT({ header, claims, privateKeyPem });
 
   const tokenUrl = `${loginUrl}/services/oauth2/token`;
@@ -266,11 +342,17 @@ async function getSalesforceAccessTokenJWT() {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form.toString(),
   });
+
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(`Failed to fetch Salesforce JWT token (${res.status}): ${txt.slice(0, 800)}`);
   }
-  const json = await res.json(); // { access_token, instance_url }
-  _cachedToken = { access_token: json.access_token, instance_url: json.instance_url, exp: nowSeconds() + 600 };
+
+  const json = await res.json(); // { access_token, instance_url, ... }
+  _cachedToken = {
+    access_token: json.access_token,
+    instance_url: json.instance_url,
+    exp: nowSeconds() + 600, // cache ~10 minutes
+  };
   return _cachedToken;
 }
