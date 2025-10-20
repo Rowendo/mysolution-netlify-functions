@@ -4,6 +4,7 @@
   "license": "MIT",
   "private": true,
   "dependencies": {
-    "parse-multipart": "^1.0.4"
+    "parse-multipart": "^1.0.4",
+    "nodemailer": "^6.9.13"
   }
 }
