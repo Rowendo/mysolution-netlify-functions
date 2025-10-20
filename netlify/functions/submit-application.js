@@ -18,7 +18,7 @@ exports.handler = async function (event) {
     return { statusCode: 204, headers: baseHeaders, body: "" };
   }
 
-  /* ---------- DEBUG: environment presence (safe) ---------- */
+  // ---------- DEBUG: environment presence (safe) ----------
   if (event.httpMethod === "GET" && event.queryStringParameters?.env === "1") {
     return {
       statusCode: 200,
@@ -40,7 +40,7 @@ exports.handler = async function (event) {
     };
   }
 
-  /* ---------- DEBUG: key shape (no secrets) ---------- */
+  // ---------- DEBUG: key shape (no secrets) ----------
   if (event.httpMethod === "GET" && event.queryStringParameters?.keyinfo === "1") {
     const pem = readPrivateKeyPemFromEnv();
     return {
@@ -57,7 +57,7 @@ exports.handler = async function (event) {
     };
   }
 
-  /* ---------- DEBUG: key parse test ---------- */
+  // ---------- DEBUG: key parse test ----------
   if (event.httpMethod === "GET" && event.queryStringParameters?.keytest === "1") {
     try {
       const pem = readPrivateKeyPemFromEnv();
@@ -73,7 +73,7 @@ exports.handler = async function (event) {
     }
   }
 
-  /* ---------- Simple GET “is alive” ---------- */
+  // Simple GET “is alive”
   if (event.httpMethod === "GET") {
     return {
       statusCode: 200,
@@ -86,9 +86,13 @@ exports.handler = async function (event) {
     };
   }
 
-  /* ---------- POST flow ---------- */
+  // ---------- POST flow ----------
   if (event.httpMethod !== "POST") {
-    return { statusCode: 405, headers: baseHeaders, body: JSON.stringify({ error: "Method not allowed" }) };
+    return {
+      statusCode: 405,
+      headers: baseHeaders,
+      body: JSON.stringify({ error: "Method not allowed" }),
+    };
   }
 
   // Parse body
@@ -96,12 +100,17 @@ exports.handler = async function (event) {
   try {
     fields = JSON.parse(event.body || "{}");
   } catch {
-    return { statusCode: 400, headers: baseHeaders, body: JSON.stringify({ error: "Invalid body" }) };
+    return {
+      statusCode: 400,
+      headers: baseHeaders,
+      body: JSON.stringify({ error: "Invalid body" }),
+    };
   }
 
   // Accept vacatureID from body or id from query (and trim)
   const qsId = (event.queryStringParameters?.id || "").trim();
-  const vacatureId = (fields.vacatureID || fields.vacancyId || fields.jobId || qsId || "").trim();
+  const vacatureId =
+    (fields.vacatureID || fields.vacancyId || fields.jobId || qsId || "").trim();
   const email = (fields.email || fields.Email || "").trim();
   const name = (fields.name || fields.Naam || "").trim();
 
@@ -111,7 +120,11 @@ exports.handler = async function (event) {
       headers: baseHeaders,
       body: JSON.stringify({
         error: "Missing required fields",
-        needed: { vacatureID_or_id: !!vacatureId, email: !!email, name: !!name },
+        needed: {
+          vacatureID_or_id: !!vacatureId,
+          email: !!email,
+          name: !!name,
+        },
       }),
     };
   }
@@ -131,29 +144,9 @@ exports.handler = async function (event) {
       .toString()
       .trim();
 
-  // ✅ LinkedIn URL: accepteer meerdere client keys, maar stuur door als msf_Linkedin_URL_c
-  const linkedin =
-    (fields.msf_Linkedin_URL_c || fields.msf__Linkedin_URL__c || fields.linkedin || fields.LinkedIn || "")
-      .toString()
-      .trim();
-
-  // ✅ CV object (optioneel) verwacht: { fileName, contentType, base64 }
-  const cv = fields.cv && typeof fields.cv === "object" ? fields.cv : null;
-  if (cv) {
-    const okShape = cv.fileName && cv.contentType && cv.base64;
-    if (!okShape) {
-      return { statusCode: 422, headers: baseHeaders, body: JSON.stringify({ error: "CV object invalid" }) };
-    }
-    // ~5MB limiet (ruwe check)
-    const approxBytes = Math.floor((cv.base64.length * 3) / 4);
-    if (approxBytes > 5 * 1024 * 1024) {
-      return { statusCode: 413, headers: baseHeaders, body: JSON.stringify({ error: "CV > 5MB" }) };
-    }
-  }
-
-  // === Mirrors legacy WordPress payload, + LinkedIn + CV (robust) ===
+  // === THIS mirrors the legacy WordPress payload exactly ===
   const msBody = {
-    setApiName: "default",        // Portal Controller Name (Active, RT=SFJobApplicationController)
+    setApiName: "default",        // must match Portal Controller Name (Active, RT=SFJobApplicationController)
     status: "Application",
     utm_source: utm,
     fields: {
@@ -163,15 +156,7 @@ exports.handler = async function (event) {
       Email:            { value: email },
       Mobiel_nummer:    { value: phone },
       PrivacyAgreement: { value: "true" },
-
-      // ✅ exact MySolution veld
-      ...(linkedin ? { msf_Linkedin_URL_c: { value: linkedin } } : {}),
     },
-
-    // ✅ CV meesturen op meerdere manieren, zoals veel WP→Apex controllers verwachten
-    ...(cv ? { cv } : {}),
-    ...(cv ? { attachments: [cv] } : {}),
-    ...(cv ? { files: [cv] } : {}),
   };
 
   // Build target URL (env supports {vacatureId})
@@ -182,7 +167,8 @@ exports.handler = async function (event) {
 
   // Debug echo (no upstream)
   const isDebug =
-    (event.queryStringParameters && event.queryStringParameters.debug === "1") || fields.debug === "1";
+    (event.queryStringParameters && event.queryStringParameters.debug === "1") ||
+    fields.debug === "1";
   if (isDebug) {
     return {
       statusCode: 200,
@@ -193,7 +179,7 @@ exports.handler = async function (event) {
           url: targetUrl,
           msBody,
           note:
-            "This echoes the exact payload the Apex expects (WordPress style + LinkedIn + CV). Remove debug=1 to post upstream.",
+            "This echoes the exact payload the Apex expects (WordPress format). Remove debug=1 to post upstream.",
         },
         null,
         2
@@ -246,7 +232,11 @@ exports.handler = async function (event) {
         headers: baseHeaders,
         body:
           text ||
-          JSON.stringify({ ok: false, error: "Salesforce Apex call failed", apexUrl }),
+          JSON.stringify({
+            ok: false,
+            error: "Salesforce Apex call failed",
+            apexUrl,
+          }),
       };
     }
 
@@ -259,14 +249,16 @@ exports.handler = async function (event) {
     return {
       statusCode: 500,
       headers: baseHeaders,
-      body: JSON.stringify({ error: "Upstream failure", detail: err?.message }),
+      body: JSON.stringify({
+        error: "Upstream failure",
+        detail: err?.message,
+      }),
     };
   }
 };
 
 /* =================== JWT helpers =================== */
-// NOTE: use explicit Node built-in to avoid polyfills during bundling
-const crypto = require("node:crypto");
+const crypto = require("crypto");
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
 function normalizePem(raw) {
@@ -278,6 +270,7 @@ function normalizePem(raw) {
   if (!s.endsWith("\n")) s += "\n";
   return s;
 }
+
 function readPrivateKeyPemFromEnv() {
   const b64 = process.env.SF_JWT_PRIVATE_KEY_B64;
   if (b64) {
@@ -288,38 +281,50 @@ function readPrivateKeyPemFromEnv() {
   }
   return normalizePem(process.env.SF_JWT_PRIVATE_KEY || "");
 }
+
 function parsePrivateKey(pem) {
   try { return crypto.createPrivateKey(pem); } catch (e1) {}
   try { return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs8" }); } catch (e2) {}
   try { return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs1" }); } catch (e3) {}
   throw new Error("Unsupported private key format");
 }
+
 function b64u(obj) {
   return Buffer.from(JSON.stringify(obj))
     .toString("base64")
-    .replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+    .replace(/=/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
 }
+
 function signJWT({ header, claims, privateKeyPem }) {
   const toSign = `${b64u(header)}.${b64u(claims)}`;
   const keyObj = parsePrivateKey(privateKeyPem);
   const sig = crypto
     .sign("RSA-SHA256", Buffer.from(toSign), keyObj)
-    .toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+    .toString("base64")
+    .replace(/=/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
   return `${toSign}.${sig}`;
 }
+
 async function getSalesforceAccessTokenJWT() {
   // reuse cached token if >30s left
   if (_cachedToken && _cachedToken.exp > nowSeconds() + 30) return _cachedToken;
 
   const loginUrl = (process.env.SF_LOGIN_URL || "https://login.salesforce.com")
-    .replace(/\/services.*$/i, "").replace(/\/+$/, "");
+    .replace(/\/services.*$/i, "")
+    .replace(/\/+$/, "");
 
   const clientId = process.env.SF_CLIENT_ID;     // Connected App Consumer Key
   const subject = process.env.SF_JWT_SUBJECT;    // Integration user (email/username)
   const privateKeyPem = readPrivateKeyPemFromEnv();
 
   if (!clientId || !subject || !privateKeyPem) {
-    throw new Error("JWT env vars missing: SF_CLIENT_ID / SF_JWT_SUBJECT / SF_JWT_PRIVATE_KEY(_B64)");
+    throw new Error(
+      "JWT env vars missing: SF_CLIENT_ID / SF_JWT_SUBJECT / SF_JWT_PRIVATE_KEY(_B64)"
+    );
   }
 
   const header = { alg: "RS256" };
@@ -346,7 +351,7 @@ async function getSalesforceAccessTokenJWT() {
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(`Failed to fetch Salesforce JWT token (${res.status}): ${txt.slice(0, 800)}`);
-  }
+    }
 
   const json = await res.json(); // { access_token, instance_url, ... }
   _cachedToken = {
