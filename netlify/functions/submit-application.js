@@ -19,7 +19,7 @@ async function notifyTeamEmail({ name, email, phone, linkedin, vacatureId, cv })
   const pass = process.env.SMTP_PASS;
   const from = process.env.MAIL_FROM || "no-reply@localhost";
 
-  // Meerdere ontvangers via komma-gescheiden lijst
+  // Meerdere ontvangers mogelijk via komma-gescheiden lijst
   const toEnv = process.env.MAIL_TO || "we@freelancersunitd.nl";
   const to = toEnv.includes(",")
     ? toEnv.split(",").map((s) => s.trim()).filter(Boolean)
@@ -63,7 +63,7 @@ async function notifyTeamEmail({ name, email, phone, linkedin, vacatureId, cv })
       ? [
           {
             filename: cv.fileName || "cv",
-            // Defensief: strip een eventuele data-URL prefix
+            // Strip eventuele data-URL prefix
             content: (cv.base64 || "").replace(/^data:.*?;base64,/, ""),
             encoding: "base64",
             contentType: cv.contentType || "application/octet-stream",
@@ -164,7 +164,7 @@ exports.handler = async function (event) {
     return { statusCode: 400, headers: baseHeaders, body: JSON.stringify({ error: "Invalid body" }) };
   }
 
-  // Accept vacatureID from body or id from query (and trim)
+  // Accept vacatureID from body or id from query (en trimmen)
   const qsId = (event.queryStringParameters?.id || "").trim();
   const vacatureId = (fields.vacatureID || fields.vacancyId || fields.jobId || qsId || "").trim();
   const email = (fields.email || fields.Email || "").trim();
@@ -181,7 +181,7 @@ exports.handler = async function (event) {
     };
   }
 
-  // Split name into Voornaam / Tussenvoegsels / Achternaam
+  // Naam splitsen in Voornaam / Tussenvoegsels / Achternaam
   const parts = String(name).trim().split(/\s+/);
   const firstName = parts.shift() || "";
   const lastName = parts.length ? parts.pop() : "";
@@ -191,16 +191,21 @@ exports.handler = async function (event) {
     (fields.phone || fields.telefoon || fields.telefoonnummer || fields["Mobiel_nummer"] || "")
       .toString()
       .trim();
+
   const utm =
     (fields.utm || fields.utm_source || fields.utmSource || fields["form-field-utm"] || "")
       .toString()
       .trim();
 
-  // LinkedIn accepteren en mappen naar exact MySolution veld
+  // LinkedIn accepteren uit meerdere mogelijke invoervelden
+  // Output-key naar MySolution is *exact* "Linkedin_profiel"
   const linkedin =
-    (fields.FU_Linkedin_profiel__c || fields.FU_Linkedin_profiel__c || fields.linkedin || fields.LinkedIn || "")
-      .toString()
-      .trim();
+    (fields.Linkedin_profiel ||
+      fields.linkedin ||
+      fields.LinkedIn ||
+      fields.linkedin_url ||
+      fields.LinkedInURL ||
+      "").toString().trim();
 
   // CV (optioneel): { fileName, contentType, base64 }
   const MAX_BYTES = 5 * 1024 * 1024; // 5MB
@@ -218,44 +223,41 @@ exports.handler = async function (event) {
   }
 
   // === Payload naar MySolution/Apex ===
-const cleanBase64 = cv ? (cv.base64 || "").replace(/^data:.*?;base64,/, "") : "";
-const fileName    = cv ? (cv.fileName || "cv") : "";
+  const cleanBase64 = cv ? (cv.base64 || "").replace(/^data:.*?;base64,/, "") : "";
+  const fileName = cv ? (cv.fileName || "cv") : "";
 
-const msBody = {
-  setApiName: "default",
-  status: "Application",
-  utm_source: utm,
-  fields: {
-    Voornaam:         { value: firstName },
-    Tussenvoegsels:   { value: tussenvoegsels },
-    Achternaam:       { value: lastName },
-    Email:            { value: email },
-    Mobiel_nummer:    { value: phone },
-    PrivacyAgreement: { value: "true" },
-    ...(linkedin ? { FU_Linkedin_profiel__c: { value: linkedin } } : {}),
+  const msBody = {
+    setApiName: "default",
+    status: "Application",
+    utm_source: utm,
+    fields: {
+      Voornaam:         { value: firstName },
+      Tussenvoegsels:   { value: tussenvoegsels },
+      Achternaam:       { value: lastName },
+      Email:            { value: email },
+      Mobiel_nummer:    { value: phone },
+      PrivacyAgreement: { value: "true" },
 
-    // 🔴 BELANGRIJK: exact zoals in je WP-voorbeeld
-    ...(cv ? { CV: { value: cleanBase64, fileName } } : {}),
-  },
+      // 👇 Belangrijk: correcte API-naam voor LinkedIn
+      ...(linkedin ? { Linkedin_profiel: { value: linkedin } } : {}),
 
-  // Mag je laten staan als “fallback” (kan geen kwaad),
-  // maar strikt genomen niet nodig als jouw Apex precies fields.CV verwacht.
-  ...(cv ? { cv } : {}),
-  ...(cv ? { attachments: [cv] } : {}),
-  ...(cv ? { files: [cv] } : {}),
+      // CV volgens jouw WP-voorbeeld
+      ...(cv ? { CV: { value: cleanBase64, fileName } } : {}),
+    },
 
-  // Desgewenst extra aliassen (optioneel):
-  // ...(cv ? { documents: [{ filename: fileName, base64: cleanBase64, contentType: cv.contentType || "application/octet-stream" }] } : {}),
-  // ...(cv ? { contentVersions: [{ Title: fileName.replace(/\.[^.]+$/, "") || "cv", VersionData: cleanBase64, PathOnClient: fileName, ContentType: cv.contentType || "application/octet-stream" }] } : {}),
-};
+    // Eventuele fallbacks/aliases (kun je laten staan; Apex negeert wat 'ie niet gebruikt)
+    ...(cv ? { cv } : {}),
+    ...(cv ? { attachments: [cv] } : {}),
+    ...(cv ? { files: [cv] } : {}),
+  };
 
-  // Build target URL (env supports {vacatureId})
+  // Doel-URL (env ondersteunt {vacatureId})
   const endpointTpl =
     process.env.MYSOLUTION_ENDPOINT ||
     "https://freelancersunited.my.salesforce.com/services/apexrest/msf/api/job/Apply?id={vacatureId}";
   const targetUrl = endpointTpl.replace("{vacatureId}", encodeURIComponent(vacatureId));
 
-  // Debug echo (no upstream)
+  // Debug echo (geen upstream call)
   const isDebug =
     (event.queryStringParameters && event.queryStringParameters.debug === "1") || fields.debug === "1";
   if (isDebug) {
