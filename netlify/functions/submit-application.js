@@ -9,6 +9,72 @@ const baseHeaders = {
 /* =================== Token cache =================== */
 let _cachedToken = null; // { access_token, instance_url, exp }
 
+/* =================== SMTP helper =================== */
+const nodemailer = require("nodemailer");
+
+async function notifyTeamEmail({ name, email, phone, linkedin, vacatureId, cv }) {
+  const host = process.env.SMTP_HOST;
+  const port = Number(process.env.SMTP_PORT || "587");
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.MAIL_FROM || "no-reply@localhost";
+
+  // Meerdere ontvangers mogelijk via komma-gescheiden lijst
+  const toEnv = process.env.MAIL_TO || "we@freelancersunitd.nl";
+  const to = toEnv.includes(",")
+    ? toEnv.split(",").map((s) => s.trim()).filter(Boolean)
+    : toEnv;
+
+  if (!host || !user || !pass) {
+    console.warn("SMTP env missing; skipping email");
+    return;
+  }
+
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,      // 465 = SMTPS, 587 = STARTTLS
+    requireTLS: port === 587,  // force STARTTLS op 587
+    auth: { user, pass },
+    tls: { ciphers: "TLSv1.2" },
+  });
+
+  const subject = `Nieuwe sollicitatie: ${name} – ${vacatureId}`;
+  const lines = [
+    "Er is zojuist een sollicitatie binnengekomen.",
+    "",
+    `Naam: ${name}`,
+    `E-mail: ${email}`,
+    `Telefoon: ${phone || "-"}`,
+    `LinkedIn: ${linkedin || "-"}`,
+    `VacatureID: ${vacatureId}`,
+    `CV bijgevoegd: ${cv ? "ja" : "nee"}`,
+    "",
+    "— Automatische melding",
+  ];
+  const text = lines.join("\n");
+
+  const mailOptions = {
+    from,
+    to,
+    subject,
+    text,
+    attachments: cv
+      ? [
+          {
+            filename: cv.fileName || "cv",
+            // Strip eventuele data-URL prefix
+            content: (cv.base64 || "").replace(/^data:.*?;base64,/, ""),
+            encoding: "base64",
+            contentType: cv.contentType || "application/octet-stream",
+          },
+        ]
+      : [],
+  };
+
+  await transporter.sendMail(mailOptions);
+}
+
 /* =================== Entry =================== */
 exports.handler = async function (event) {
   // CORS preflight
@@ -161,11 +227,34 @@ exports.handler = async function (event) {
       });
     }
 
-    // Geen details naar de client
-    if (upstream.ok) {
+    // We lezen de response, maar sturen *geen* details door naar de client
+    const ok = upstream.ok;
+
+    // ✅ Apex ok → stuur teammail (fout mag niet de response blokkeren)
+    try {
+      await notifyTeamEmail({
+        name,
+        email,
+        phone,
+        linkedin,
+        vacatureId,
+        cv: cv
+          ? {
+              fileName,
+              contentType: cv.contentType || "application/octet-stream",
+              base64: cleanBase64,
+            }
+          : null,
+      });
+    } catch (mailErr) {
+      console.warn("notifyTeamEmail failed:", mailErr);
+    }
+
+    if (ok) {
       return { statusCode: 200, headers: baseHeaders, body: JSON.stringify({ ok: true }) };
     }
 
+    // Upstream error → generiek antwoord
     console.error("Upstream error status:", upstream.status);
     return {
       statusCode: 502,
@@ -198,7 +287,7 @@ function normalizePem(raw) {
 }
 function readPrivateKeyPemFromEnv() {
   const b64 = process.env.SF_JWT_PRIVATE_KEY_B64;
-  if (b4) { // typo fixed below
+  if (b64) {
     try {
       const decoded = Buffer.from(b64, "base64").toString("utf8");
       return normalizePem(decoded);
@@ -209,7 +298,7 @@ function readPrivateKeyPemFromEnv() {
 function parsePrivateKey(pem) {
   try { return crypto.createPrivateKey(pem); } catch (e1) {}
   try { return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs8" }); } catch (e2) {}
-  try { return crypto.createPrivateKey({ key: pem, format: "pem", type: "pkcs1" }); } catch (e3) {}
+  try { return crypto.createPrivateKey({ key: pem, format: "pem", type: "pem", type: "pkcs1" }); } catch (e3) {}
   throw new Error("Unsupported private key format");
 }
 function b64u(obj) {
