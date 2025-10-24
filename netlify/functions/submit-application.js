@@ -9,73 +9,6 @@ const baseHeaders = {
 /* =================== Token cache =================== */
 let _cachedToken = null; // { access_token, instance_url, exp }
 
-/* =================== SMTP helper =================== */
-const nodemailer = require("nodemailer");
-
-async function notifyTeamEmail({ name, email, phone, linkedin, vacatureId, cv }) {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || "587");
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.MAIL_FROM || "no-reply@localhost";
-
-  // Meerdere ontvangers mogelijk via komma-gescheiden lijst
-  const toEnv = process.env.MAIL_TO || "we@freelancersunitd.nl";
-  const to = toEnv.includes(",")
-    ? toEnv.split(",").map((s) => s.trim()).filter(Boolean)
-    : toEnv;
-
-  if (!host || !user || !pass) {
-    console.warn("SMTP env missing; skipping email");
-    return;
-  }
-
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,      // 465 = SMTPS, 587 = STARTTLS
-    requireTLS: port === 587,  // force STARTTLS op 587
-    auth: { user, pass },
-    tls: { ciphers: "TLSv1.2" },
-  });
-
-  const subject = `Nieuwe sollicitatie: ${name} – ${vacatureId}`;
-  const lines = [
-    "Er is zojuist een sollicitatie binnengekomen.",
-    "",
-    `Naam: ${name}`,
-    `E-mail: ${email}`,
-    `Telefoon: ${phone || "-"}`,
-    `LinkedIn: ${linkedin || "-"}`,
-    `VacatureID: ${vacatureId}`,
-    `CV bijgevoegd: ${cv ? "ja" : "nee"}`,
-    "",
-    "— Automatische melding",
-  ];
-  const text = lines.join("\n");
-
-  const mailOptions = {
-    from,
-    to,
-    subject,
-    text,
-    attachments: cv
-      ? [
-          {
-            filename: cv.fileName || "cv",
-            // Strip eventuele data-URL prefix
-            content: (cv.base64 || "").replace(/^data:.*?;base64,/, ""),
-            encoding: "base64",
-            contentType: cv.contentType || "application/octet-stream",
-          },
-        ]
-      : [],
-  };
-
-  const res = await transporter.sendMail(mailOptions);
-  return res;
-}
-
 /* =================== Entry =================== */
 exports.handler = async function (event) {
   // CORS preflight
@@ -83,85 +16,30 @@ exports.handler = async function (event) {
     return { statusCode: 204, headers: baseHeaders, body: "" };
   }
 
-  /* ---------- DEBUG: environment presence (safe) ---------- */
-  if (event.httpMethod === "GET" && event.queryStringParameters?.env === "1") {
-    return {
-      statusCode: 200,
-      headers: baseHeaders,
-      body: JSON.stringify({
-        ok: true,
-        fn: "submit-application",
-        has_client_id: !!process.env.SF_CLIENT_ID,
-        has_subject: !!process.env.SF_JWT_SUBJECT,
-        has_key_b64: !!process.env.SF_JWT_PRIVATE_KEY_B64,
-        has_key_plain: !!process.env.SF_JWT_PRIVATE_KEY,
-        login_url: (process.env.SF_LOGIN_URL || "https://login.salesforce.com")
-          .replace(/\/services.*$/i, "")
-          .replace(/\/+$/, ""),
-        endpoint_tpl:
-          process.env.MYSOLUTION_ENDPOINT ||
-          "https://freelancersunited.my.salesforce.com/services/apexrest/msf/api/job/Apply?id={vacatureId}",
-      }),
-    };
-  }
-
-  /* ---------- DEBUG: key shape (no secrets) ---------- */
-  if (event.httpMethod === "GET" && event.queryStringParameters?.keyinfo === "1") {
-    const pem = readPrivateKeyPemFromEnv();
-    return {
-      statusCode: 200,
-      headers: baseHeaders,
-      body: JSON.stringify({
-        present: !!pem,
-        length: pem ? pem.length : 0,
-        beginsWith: pem ? pem.slice(0, 30) : null,
-        headerDetected: pem
-          ? pem.includes("BEGIN PRIVATE KEY") || pem.includes("BEGIN RSA PRIVATE KEY")
-          : false,
-      }),
-    };
-  }
-
-  /* ---------- DEBUG: key parse test ---------- */
-  if (event.httpMethod === "GET" && event.queryStringParameters?.keytest === "1") {
-    try {
-      const pem = readPrivateKeyPemFromEnv();
-      if (!pem) throw new Error("no key read from env");
-      parsePrivateKey(pem); // throws if invalid
-      return { statusCode: 200, headers: baseHeaders, body: JSON.stringify({ ok: true }) };
-    } catch (e) {
-      return {
-        statusCode: 500,
-        headers: baseHeaders,
-        body: JSON.stringify({ ok: false, error: String(e.message) }),
-      };
-    }
-  }
-
-  /* ---------- Simple GET “is alive” ---------- */
+  // Minimal “alive” check
   if (event.httpMethod === "GET") {
-    return {
-      statusCode: 200,
-      headers: baseHeaders,
-      body: JSON.stringify({
-        ok: true,
-        fn: "submit-application",
-        url: "https://idyllic-clafoutis-89e556.netlify.app/.netlify/functions/submit-application",
-      }),
-    };
+    return { statusCode: 200, headers: baseHeaders, body: JSON.stringify({ ok: true }) };
   }
 
-  /* ---------- POST flow ---------- */
   if (event.httpMethod !== "POST") {
-    return { statusCode: 405, headers: baseHeaders, body: JSON.stringify({ error: "Method not allowed" }) };
+    return {
+      statusCode: 405,
+      headers: baseHeaders,
+      body: JSON.stringify({ ok: false, error: "Method not allowed" }),
+    };
   }
 
   // Parse body
   let fields = {};
   try {
     fields = JSON.parse(event.body || "{}");
-  } catch {
-    return { statusCode: 400, headers: baseHeaders, body: JSON.stringify({ error: "Invalid body" }) };
+  } catch (e) {
+    console.error("Invalid JSON body:", e);
+    return {
+      statusCode: 400,
+      headers: baseHeaders,
+      body: JSON.stringify({ ok: false, error: "Ongeldige aanvraag" }),
+    };
   }
 
   // Accept vacatureID from body or id from query (en trimmen)
@@ -171,13 +49,11 @@ exports.handler = async function (event) {
   const name = (fields.name || fields.Naam || "").trim();
 
   if (!vacatureId || !email || !name) {
+    // Geen details naar de client – houd het generiek
     return {
       statusCode: 422,
       headers: baseHeaders,
-      body: JSON.stringify({
-        error: "Missing required fields",
-        needed: { vacatureID_or_id: !!vacatureId, email: !!email, name: !!name },
-      }),
+      body: JSON.stringify({ ok: false, error: "Aanvraag onvolledig" }),
     };
   }
 
@@ -198,7 +74,6 @@ exports.handler = async function (event) {
       .trim();
 
   // LinkedIn accepteren uit meerdere mogelijke invoervelden
-  // Output-key naar MySolution is *exact* "Linkedin_profiel"
   const linkedin =
     (fields.Linkedin_profiel ||
       fields.linkedin ||
@@ -213,12 +88,13 @@ exports.handler = async function (event) {
   if (cv) {
     const okShape = cv.fileName && cv.contentType && cv.base64;
     if (!okShape) {
-      return { statusCode: 422, headers: baseHeaders, body: JSON.stringify({ error: "CV object invalid" }) };
+      console.warn("CV object invalid shape");
+      return { statusCode: 422, headers: baseHeaders, body: JSON.stringify({ ok: false, error: "Ongeldige bijlage" }) };
     }
     // ~5MB check (base64->bytes)
     const approxBytes = Math.floor((cv.base64.length * 3) / 4);
     if (approxBytes > MAX_BYTES) {
-      return { statusCode: 413, headers: baseHeaders, body: JSON.stringify({ error: "CV > 5MB" }) };
+      return { statusCode: 413, headers: baseHeaders, body: JSON.stringify({ ok: false, error: "Bijlage te groot" }) };
     }
   }
 
@@ -237,18 +113,9 @@ exports.handler = async function (event) {
       Email:            { value: email },
       Mobiel_nummer:    { value: phone },
       PrivacyAgreement: { value: "true" },
-
-      // 👇 Belangrijk: correcte API-naam voor LinkedIn
       ...(linkedin ? { Linkedin_profiel: { value: linkedin } } : {}),
-
-      // CV volgens jouw WP-voorbeeld
       ...(cv ? { CV: { value: cleanBase64, fileName } } : {}),
     },
-
-    // Eventuele fallbacks/aliases (kun je laten staan; Apex negeert wat 'ie niet gebruikt)
-    ...(cv ? { cv } : {}),
-    ...(cv ? { attachments: [cv] } : {}),
-    ...(cv ? { files: [cv] } : {}),
   };
 
   // Doel-URL (env ondersteunt {vacatureId})
@@ -256,26 +123,6 @@ exports.handler = async function (event) {
     process.env.MYSOLUTION_ENDPOINT ||
     "https://freelancersunited.my.salesforce.com/services/apexrest/msf/api/job/Apply?id={vacatureId}";
   const targetUrl = endpointTpl.replace("{vacatureId}", encodeURIComponent(vacatureId));
-
-  // Debug echo (geen upstream call)
-  const isDebug =
-    (event.queryStringParameters && event.queryStringParameters.debug === "1") || fields.debug === "1";
-  if (isDebug) {
-    return {
-      statusCode: 200,
-      headers: baseHeaders,
-      body: JSON.stringify(
-        {
-          debug: true,
-          url: targetUrl,
-          msBody,
-          note: "Echo van payload; verwijder debug=1 om upstream te posten.",
-        },
-        null,
-        2
-      ),
-    };
-  }
 
   try {
     // 1) JWT access token (cached)
@@ -314,22 +161,24 @@ exports.handler = async function (event) {
       });
     }
 
-    const text = await upstream.text();
-
-    if (!upstream.ok) {
-      return { statusCode: upstream.status, headers: baseHeaders, body: text || JSON.stringify({ ok: false }) };
+    // Geen details naar de client
+    if (upstream.ok) {
+      return { statusCode: 200, headers: baseHeaders, body: JSON.stringify({ ok: true }) };
     }
 
-    // ✅ Apex ok → stuur teammail (fout mag niet de response blokkeren)
-    try {
-      await notifyTeamEmail({ name, email, phone, linkedin, vacatureId, cv });
-    } catch (mailErr) {
-      console.warn("notifyTeamEmail failed:", mailErr);
-    }
-
-    return { statusCode: upstream.status, headers: baseHeaders, body: text || JSON.stringify({ ok: true }) };
+    console.error("Upstream error status:", upstream.status);
+    return {
+      statusCode: 502,
+      headers: baseHeaders,
+      body: JSON.stringify({ ok: false, error: "Er ging iets mis bij het verzenden" }),
+    };
   } catch (err) {
-    return { statusCode: 500, headers: baseHeaders, body: JSON.stringify({ error: "Upstream failure", detail: err?.message }) };
+    console.error("Unhandled server error:", err);
+    return {
+      statusCode: 500,
+      headers: baseHeaders,
+      body: JSON.stringify({ ok: false, error: "Er ging iets mis" }),
+    };
   }
 };
 
@@ -349,7 +198,7 @@ function normalizePem(raw) {
 }
 function readPrivateKeyPemFromEnv() {
   const b64 = process.env.SF_JWT_PRIVATE_KEY_B64;
-  if (b64) {
+  if (b4) { // typo fixed below
     try {
       const decoded = Buffer.from(b64, "base64").toString("utf8");
       return normalizePem(decoded);
@@ -403,8 +252,9 @@ async function getSalesforceAccessTokenJWT() {
   });
 
   if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Failed to fetch Salesforce JWT token (${res.status}): ${txt.slice(0, 800)}`);
+    const txt = await res.text().catch(() => "");
+    console.error("Failed to fetch Salesforce JWT token:", res.status, txt.slice(0, 800));
+    throw new Error("JWT token fetch failed");
   }
 
   const json = await res.json();
