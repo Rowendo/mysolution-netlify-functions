@@ -1,11 +1,3 @@
-// netlify/functions/get-jobs.js
-export async function handler() {
-  const headers = {
-    "Access-Control-Allow-Origin": "*",
-    "Content-Type": "application/json",
-  };
-
-  // ✅ Framer CMS-vriendelijk JSON-formaat
   const jobs = [
     {
       id: "a0w7R00000JKUieQAH",
@@ -35,10 +27,3 @@ export async function handler() {
       location: "Utrecht"
     }
   ];
-
-  return {
-    statusCode: 200,
-    headers,
-    body: JSON.stringify(jobs),
-  };
-}
