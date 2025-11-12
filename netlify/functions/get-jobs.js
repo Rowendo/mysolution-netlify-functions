@@ -1,3 +1,9 @@
+export async function handler() {
+  const headers = {
+    "Access-Control-Allow-Origin": "*",
+    "Content-Type": "application/json",
+  };
+
   const jobs = [
     {
       id: "a0w7R00000JKUieQAH",
@@ -27,3 +33,10 @@
       location: "Utrecht"
     }
   ];
+
+  return {
+    statusCode: 200,
+    headers,
+    body: JSON.stringify(jobs),
+  };
+}
