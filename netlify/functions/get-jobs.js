@@ -5,30 +5,34 @@ export async function handler() {
     "Content-Type": "application/json",
   };
 
+  // ✅ Framer CMS-vriendelijk JSON-formaat
   const jobs = [
     {
-      "Functietitel": "Junior Digital Marketeer",
-      "Vacature ID": "a0w7R00000JKUieQAH",
-      "Headerafbeelding": "https://images.unsplash.com/photo-1519389950473-47ba0277781c",
-      "Logo bedrijf": "https://upload.wikimedia.org/wikipedia/commons/a/ab/Logo_TV_2015.png",
-      "Slug": "junior-digital-marketeer",
-      "Locatie": "Amsterdam"
+      id: "a0w7R00000JKUieQAH",
+      title: "Junior Digital Marketeer",
+      description: "Junior marketeer verantwoordelijk voor online campagnes en SEO.",
+      image: "https://images.unsplash.com/photo-1519389950473-47ba0277781c",
+      companyLogo: "https://upload.wikimedia.org/wikipedia/commons/a/ab/Logo_TV_2015.png",
+      slug: "junior-digital-marketeer",
+      location: "Amsterdam"
     },
     {
-      "Functietitel": "Marketing & Communicatie Lead",
-      "Vacature ID": "a0w7R00000JKUieQAI",
-      "Headerafbeelding": "https://images.unsplash.com/photo-1557804506-669a67965ba0",
-      "Logo bedrijf": "https://upload.wikimedia.org/wikipedia/commons/c/c5/Logo_example.svg",
-      "Slug": "marketing-communicatie-lead",
-      "Locatie": "Rotterdam"
+      id: "a0w7R00000JKUieQAI",
+      title: "Marketing & Communicatie Lead",
+      description: "Leid onze content- en marketingstrategie binnen het team.",
+      image: "https://images.unsplash.com/photo-1557804506-669a67965ba0",
+      companyLogo: "https://upload.wikimedia.org/wikipedia/commons/c/c5/Logo_example.svg",
+      slug: "marketing-communicatie-lead",
+      location: "Rotterdam"
     },
     {
-      "Functietitel": "Senior Webdesigner",
-      "Vacature ID": "a0w7R00000JKUieQAJ",
-      "Headerafbeelding": "https://images.unsplash.com/photo-1515378791036-0648a3ef77b2",
-      "Logo bedrijf": "https://upload.wikimedia.org/wikipedia/commons/3/3f/Logo_example.png",
-      "Slug": "senior-webdesigner",
-      "Locatie": "Utrecht"
+      id: "a0w7R00000JKUieQAJ",
+      title: "Senior Webdesigner",
+      description: "Ervaren webdesigner met focus op UX en visuele identiteit.",
+      image: "https://images.unsplash.com/photo-1515378791036-0648a3ef77b2",
+      companyLogo: "https://upload.wikimedia.org/wikipedia/commons/3/3f/Logo_example.png",
+      slug: "senior-webdesigner",
+      location: "Utrecht"
     }
   ];
 
