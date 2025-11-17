@@ -939,7 +939,12 @@ Alle onderdelen moeten uitvoerbaar, toetsbaar en consistent zijn.`,
   }
 });
 
-const approvalRequest = (message: string) => {
+// NIEUW
+// Optioneel: JSDoc voor typehulp
+/**
+ * @param {string} message
+ */
+const approvalRequest = (message) => {
 
   // TODO: Implement
   return true;
