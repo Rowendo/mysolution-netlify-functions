@@ -92,6 +92,16 @@ function formatCurrencyEUR(val) {
   return `€ ${str}`;
 }
 
+function formatUrenRange(val) {
+  if (val === null || val === undefined || val === "") return "";
+  // eerst HTML weg (voor de zekerheid)
+  let txt = cleanText(val);
+  // verwijder euroteken + eventuele spatie
+  txt = txt.replace(/€\s*/g, "");
+  // optioneel: "uur" of "u" netjes houden
+  return txt.trim();
+}
+
 /* ============================
    SLUGIFY
 ============================ */
@@ -250,7 +260,7 @@ exports.handler = async (event) => {
       vacatureID: v.msf__Job__c,
       bedrijf: cleanText(v.msf__Account_Name__c), 
       locatie: cleanText(v.msf__Work_Address_City__c),
-      urenrange: cleanText(v.FU_Urenrange_per_week__c),
+      urenrange: formatUrenRange(v.FU_Urenrange_per_week__c),
 
       salarisMinimum: formatCurrencyEUR(v.msf__Salary_from__c),
       salarisMaximum: formatCurrencyEUR(v.msf__Salary_to__c),
