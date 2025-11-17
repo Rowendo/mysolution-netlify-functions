@@ -232,7 +232,7 @@ exports.handler = async (event) => {
   // -----------------------------
   .map((v) => {
     const vacatureId = v.msf__Job__c || v.Id || "";
-    const vacatureTitelRaw = v.vacaturetitel__c || "";
+    const vacatureTitelRaw = v.FU_vacaturetitel__c || "";
     const vacatureTitel = cleanText(vacatureTitelRaw);
 
     const slug = slugify(vacatureTitel || "vacature");
