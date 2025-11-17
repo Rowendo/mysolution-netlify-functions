@@ -212,63 +212,74 @@ exports.handler = async (event) => {
 
     // 4) Mappen naar jouw structuur
     const jobs = vacatures
-      // Optioneel filter: alleen tonen als "Op website tonen" = ja/true
-      .filter((v) => {
-        const show = v.msf__Show_On_Website__c;
-        if (show === undefined || show === null) return true;
-        return ["true", true, 1, "1", "ja", "Ja"].includes(show);
-      })
-      .map((v) => {
-        // Vacaturetitel & ID
-        const vacatureId = v.msf__Job__c || v.Id || "";
-        const vacatureTitelRaw = v.vacaturetitel__c || ""; // <<-- HIER komt de titel uit MySolution
-        const vacatureTitel = cleanText(vacatureTitelRaw);
+  // -----------------------------
+  // FILTER FASE
+  // -----------------------------
+  .filter((v) => {
+    // 1) Vervulde vacatures nooit tonen
+    const status = (v.FU_Vacature_vervuld__c || "").toString().toLowerCase();
+    if (status === "vervuld") return false;
 
-        // Slug alleen op basis van titel
-        const slug = slugify(vacatureTitel || "vacature");
+    // 2) Show_On_Website check
+    const show = v.msf__Show_On_Website__c;
+    if (show === undefined || show === null) return true;
 
-        return {
-          // Basisvelden
-          id: vacatureId,
-          slug,
-          vacatureTitel,
+    return ["true", true, 1, "1", "ja", "Ja"].includes(show);
+  })
 
-          // Overige velden uit jouw tabel
-          opWebsiteTonen: v.msf__Show_On_Website__c,
-          vacatureID: v.msf__Job__c,
-          locatie: cleanText(v.msf__Work_Address_City__c),
-          urenrange: cleanText(v.FU_Urenrange_per_week__c),
+  // -----------------------------
+  // MAPPING FASE
+  // -----------------------------
+  .map((v) => {
+    const vacatureId = v.msf__Job__c || v.Id || "";
+    const vacatureTitelRaw = v.vacaturetitel__c || "";
+    const vacatureTitel = cleanText(vacatureTitelRaw);
 
-          // Salaris met €
-          salarisMinimum: formatCurrencyEUR(v.msf__Salary_from__c),
-          salarisMaximum: formatCurrencyEUR(v.msf__Salary_to__c),
+    const slug = slugify(vacatureTitel || "vacature");
 
-          headerAfbeelding: v.FU_Header_afbeelding__c, // url
-          introductie: cleanText(v.FU_Korte_introductie_Tekst__c),
+    return {
+      id: vacatureId,
+      slug,
+      vacatureTitel,
 
-          jobHighlightTitel1: cleanText(v.FU_Titel_Job_highlight_1__c),
-          jobHighlightText1: cleanText(v.FU_Tekst_job_highlight_1__c),
-          jobHighlightTitel2: cleanText(v.FU_Titel_Job_highlight_2__c),
-          jobHighlightText2: cleanText(v.FU_Tekst_job_highlight_2__c),
-          jobHighlightTitel3: cleanText(v.FU_Titel_Job_highlight_3__c),
-          jobHighlightText3: cleanText(v.FU_Tekst_Job_highlight_3__c),
+      // Nieuwe veld
+      statusVacature: cleanText(v.FU_Vacature_vervuld__c),
 
-          youGet1: cleanText(v.FU_you_get_1__c),
-          youGet2: cleanText(v.FU_you_get_2__c),
-          youGet3: cleanText(v.FU_you_get_3__c),
-          youGet4: cleanText(v.FU_you_get_4__c),
-          youGet5: cleanText(v.FU_you_get_5__c),
+      // Overige velden
+      opWebsiteTonen: v.msf__Show_On_Website__c,
+      vacatureID: v.msf__Job__c,
+      locatie: cleanText(v.msf__Work_Address_City__c),
+      urenrange: cleanText(v.FU_Urenrange_per_week__c),
 
-          youAre1: cleanText(v.FU_you_are_1__c),
-          youAre2: cleanText(v.FU_you_are_2__c),
-          youAre3: cleanText(v.FU_you_are_3__c),
-          youAre4: cleanText(v.FU_you_are_4__c),
-          youAre5: cleanText(v.FU_you_are_5__c),
+      salarisMinimum: formatCurrencyEUR(v.msf__Salary_from__c),
+      salarisMaximum: formatCurrencyEUR(v.msf__Salary_to__c),
 
-          logoOpdrachtgever: v.FU_Afbeelding_logo_opdrachtgever__c, // url
-          overOpdrachtgever: cleanText(v.FU_Over_de_opdrachtgever__c),
-        };
-      });
+      headerAfbeelding: v.FU_Header_afbeelding__c,
+      introductie: cleanText(v.FU_Korte_introductie_Tekst__c),
+
+      jobHighlightTitel1: cleanText(v.FU_Titel_Job_highlight_1__c),
+      jobHighlightText1: cleanText(v.FU_Tekst_job_highlight_1__c),
+      jobHighlightTitel2: cleanText(v.FU_Titel_Job_highlight_2__c),
+      jobHighlightText2: cleanText(v.FU_Tekst_job_highlight_2__c),
+      jobHighlightTitel3: cleanText(v.FU_Titel_Job_highlight_3__c),
+      jobHighlightText3: cleanText(v.FU_Tekst_Job_highlight_3__c),
+
+      youGet1: cleanText(v.FU_you_get_1__c),
+      youGet2: cleanText(v.FU_you_get_2__c),
+      youGet3: cleanText(v.FU_you_get_3__c),
+      youGet4: cleanText(v.FU_you_get_4__c),
+      youGet5: cleanText(v.FU_you_get_5__c),
+
+      youAre1: cleanText(v.FU_you_are_1__c),
+      youAre2: cleanText(v.FU_you_are_2__c),
+      youAre3: cleanText(v.FU_you_are_3__c),
+      youAre4: cleanText(v.FU_you_are_4__c),
+      youAre5: cleanText(v.FU_you_are_5__c),
+
+      logoOpdrachtgever: v.FU_Afbeelding_logo_opdrachtgever__c,
+      overOpdrachtgever: cleanText(v.FU_Over_de_opdrachtgever__c),
+    };
+  });
 
     // 5) JSON response
     return {
