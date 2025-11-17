@@ -248,7 +248,7 @@ exports.handler = async (event) => {
       // Overige velden
       opWebsiteTonen: v.msf__Show_On_Website__c,
       vacatureID: v.msf__Job__c,
-      bedrijf: cleanText(v.msf__Account__c), 
+      bedrijf: cleanText(v.msf__Account_Name__c), 
       locatie: cleanText(v.msf__Work_Address_City__c),
       urenrange: cleanText(v.FU_Urenrange_per_week__c),
 
