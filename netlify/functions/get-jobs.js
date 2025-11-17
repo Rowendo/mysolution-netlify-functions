@@ -94,11 +94,9 @@ function formatCurrencyEUR(val) {
 
 function formatUrenRange(val) {
   if (val === null || val === undefined || val === "") return "";
-  // eerst HTML weg (voor de zekerheid)
   let txt = cleanText(val);
   // verwijder euroteken + eventuele spatie
   txt = txt.replace(/€\s*/g, "");
-  // optioneel: "uur" of "u" netjes houden
   return txt.trim();
 }
 
@@ -220,77 +218,139 @@ exports.handler = async (event) => {
     const data = await res.json();
     const vacatures = Array.isArray(data) ? data : data.records || data;
 
-    // 4) Mappen naar jouw structuur
+    /* ============================
+       RECRUITERS OPHALEN (User)
+       op basis van msf__Recruiter__c
+    ============================ */
+    const recruiterIdSet = new Set();
+
+    for (const v of vacatures) {
+      const rid = v.msf__Recruiter__c;
+      if (rid) recruiterIdSet.add(rid);
+    }
+
+    let recruiterById = {};
+
+    if (recruiterIdSet.size > 0) {
+      const recruiterIds = Array.from(recruiterIdSet);
+
+      const soql = `
+        SELECT Id, Name, Email, Phone, MobilePhone, SmallPhotoUrl
+        FROM User
+        WHERE Id IN (${recruiterIds.map((id) => `'${id}'`).join(",")})
+      `;
+
+      // kies een API versie die bij jullie org past
+      const queryUrl = `${instance_url.replace(/\/+$/, "")}/services/data/v60.0/query?q=${encodeURIComponent(
+        soql
+      )}`;
+
+      const userRes = await fetch(queryUrl, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${access_token}`,
+        },
+      });
+
+      if (!userRes.ok) {
+        const txt = await userRes.text().catch(() => "");
+        console.error("User query failed:", userRes.status, txt.slice(0, 800));
+      } else {
+        const userJson = await userRes.json();
+        const users = userJson.records || [];
+
+        recruiterById = users.reduce((acc, u) => {
+          acc[u.Id] = {
+            name: u.Name || "",
+            email: u.Email || "",
+            phone: u.MobilePhone || u.Phone || "",
+            photoUrl: u.SmallPhotoUrl || "",
+          };
+          return acc;
+        }, {});
+      }
+    }
+
+    /* ============================
+       VACATURES FILTEREN & MAPPEN
+    ============================ */
     const jobs = vacatures
-  // -----------------------------
-  // FILTER FASE
-  // -----------------------------
-  .filter((v) => {
-    // 1) Vervulde vacatures nooit tonen
-    const status = (v.FU_Vacature_vervuld__c || "").toString().toLowerCase();
-    if (status === "vervuld") return false;
+      // FILTER FASE
+      .filter((v) => {
+        // 1) Vervulde vacatures nooit tonen
+        const status = (v.FU_Vacature_vervuld__c || "").toString().toLowerCase();
+        if (status === "vervuld") return false;
 
-    // 2) Show_On_Website check
-    const show = v.msf__Show_On_Website__c;
-    if (show === undefined || show === null) return true;
+        // 2) Show_On_Website check
+        const show = v.msf__Show_On_Website__c;
+        if (show === undefined || show === null) return true;
 
-    return ["true", true, 1, "1", "ja", "Ja"].includes(show);
-  })
+        return ["true", true, 1, "1", "ja", "Ja"].includes(show);
+      })
 
-  // -----------------------------
-  // MAPPING FASE
-  // -----------------------------
-  .map((v) => {
-    const vacatureId = v.msf__Job__c || v.Id || "";
-    const vacatureTitelRaw = v.FU_vacaturetitel__c || "";
-    const vacatureTitel = cleanText(vacatureTitelRaw);
+      // MAPPING FASE
+      .map((v) => {
+        const vacatureId = v.msf__Job__c || v.Id || "";
+        const vacatureTitelRaw = v.FU_vacaturetitel__c || "";
+        const vacatureTitel = cleanText(vacatureTitelRaw);
 
-    const slug = slugify(vacatureTitel || "vacature");
+        const slug = slugify(vacatureTitel || "vacature");
 
-    return {
-      id: vacatureId,
-      slug,
-      vacatureTitel,
+        // Recruiter uit map halen
+        const recruiterId = v.msf__Recruiter__c;
+        const recruiter = recruiterId ? recruiterById[recruiterId] || {} : {};
 
-      // Nieuwe veld
-      statusVacature: cleanText(v.FU_Vacature_vervuld__c),
+        return {
+          id: vacatureId,
+          slug,
+          vacatureTitel,
 
-      // Overige velden
-      opWebsiteTonen: v.msf__Show_On_Website__c,
-      vacatureID: v.msf__Job__c,
-      bedrijf: cleanText(v.msf__Account_Name__c), 
-      locatie: cleanText(v.msf__Work_Address_City__c),
-      urenrange: formatUrenRange(v.FU_Urenrange_per_week__c),
+          // Nieuwe veld
+          statusVacature: cleanText(v.FU_Vacature_vervuld__c),
 
-      salarisMinimum: formatCurrencyEUR(v.msf__Salary_from__c),
-      salarisMaximum: formatCurrencyEUR(v.msf__Salary_to__c),
+          // Overige velden
+          opWebsiteTonen: v.msf__Show_On_Website__c,
+          vacatureID: v.msf__Job__c,
+          bedrijf: cleanText(v.msf__Account_Name__c),
+          locatie: cleanText(v.msf__Work_Address_City__c),
+          urenrange: formatUrenRange(v.FU_Urenrange_per_week__c),
 
-      headerAfbeelding: v.FU_Header_afbeelding__c,
-      introductie: cleanText(v.FU_Korte_introductie_Tekst__c),
+          salarisMinimum: formatCurrencyEUR(v.msf__Salary_from__c),
+          salarisMaximum: formatCurrencyEUR(v.msf__Salary_to__c),
 
-      jobHighlightTitel1: cleanText(v.FU_Titel_Job_highlight_1__c),
-      jobHighlightText1: cleanText(v.FU_Tekst_job_highlight_1__c),
-      jobHighlightTitel2: cleanText(v.FU_Titel_Job_highlight_2__c),
-      jobHighlightText2: cleanText(v.FU_Tekst_job_highlight_2__c),
-      jobHighlightTitel3: cleanText(v.FU_Titel_Job_highlight_3__c),
-      jobHighlightText3: cleanText(v.FU_Tekst_Job_highlight_3__c),
+          headerAfbeelding: v.FU_Header_afbeelding__c,
+          introductie: cleanText(v.FU_Korte_introductie_Tekst__c),
 
-      youGet1: cleanText(v.FU_you_get_1__c),
-      youGet2: cleanText(v.FU_you_get_2__c),
-      youGet3: cleanText(v.FU_you_get_3__c),
-      youGet4: cleanText(v.FU_you_get_4__c),
-      youGet5: cleanText(v.FU_you_get_5__c),
+          jobHighlightTitel1: cleanText(v.FU_Titel_Job_highlight_1__c),
+          jobHighlightText1: cleanText(v.FU_Tekst_job_highlight_1__c),
+          jobHighlightTitel2: cleanText(v.FU_Titel_Job_highlight_2__c),
+          jobHighlightText2: cleanText(v.FU_Tekst_job_highlight_2__c),
+          jobHighlightTitel3: cleanText(v.FU_Titel_Job_highlight_3__c),
+          jobHighlightText3: cleanText(v.FU_Tekst_Job_highlight_3__c),
 
-      youAre1: cleanText(v.FU_you_are_1__c),
-      youAre2: cleanText(v.FU_you_are_2__c),
-      youAre3: cleanText(v.FU_you_are_3__c),
-      youAre4: cleanText(v.FU_you_are_4__c),
-      youAre5: cleanText(v.FU_you_are_5__c),
+          youGet1: cleanText(v.FU_you_get_1__c),
+          youGet2: cleanText(v.FU_you_get_2__c),
+          youGet3: cleanText(v.FU_you_get_3__c),
+          youGet4: cleanText(v.FU_you_get_4__c),
+          youGet5: cleanText(v.FU_you_get_5__c),
 
-      logoOpdrachtgever: v.FU_Afbeelding_logo_opdrachtgever__c,
-      overOpdrachtgever: cleanText(v.FU_Over_de_opdrachtgever__c),
-    };
-  });
+          youAre1: cleanText(v.FU_you_are_1__c),
+          youAre2: cleanText(v.FU_you_are_2__c),
+          youAre3: cleanText(v.FU_you_are_3__c),
+          youAre4: cleanText(v.FU_you_are_4__c),
+          youAre5: cleanText(v.FU_you_are_5__c),
+
+          logoOpdrachtgever: v.FU_Afbeelding_logo_opdrachtgever__c,
+          overOpdrachtgever: cleanText(v.FU_Over_de_opdrachtgever__c),
+
+          // 🔹 Contactpersoon vanuit User
+          contactNaam: recruiter.name || "",
+          contactEmail: recruiter.email || "",
+          contactTelefoon: recruiter.phone || "",
+          contactAfbeelding: recruiter.photoUrl || "",
+        };
+      });
 
     // 5) JSON response
     return {
