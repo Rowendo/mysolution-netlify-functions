@@ -13,7 +13,7 @@ const baseHeaders = {
 let _cachedToken = null;
 
 /* ============================
-   HELPERS
+   GENERIC HELPERS
 ============================ */
 function nowSeconds() {
   return Math.floor(Date.now() / 1000);
@@ -53,6 +53,60 @@ function signJWT({ header, claims, privateKeyPem }) {
 }
 
 /* ============================
+   TEXT / HTML HELPERS
+============================ */
+function stripHtml(str) {
+  if (!str) return "";
+  return String(str)
+    // bewaar simpele regelafbrekingen
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    // overige tags weg
+    .replace(/<[^>]+>/g, "")
+    // html entities
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
+function cleanText(val) {
+  return stripHtml(val);
+}
+
+function formatCurrencyEUR(val) {
+  if (val === null || val === undefined || val === "") return "";
+  const str = String(val).trim();
+
+  // Als Salesforce al "€" meestuurt, niets veranderen
+  if (str.includes("€")) return str;
+
+  // Proberen te parsen als getal
+  const numeric = Number(str.replace(/\./g, "").replace(/,/g, "."));
+  if (!isNaN(numeric)) {
+    return `€ ${numeric}`;
+  }
+
+  // Fallback: gewoon "€ " ervoor zetten
+  return `€ ${str}`;
+}
+
+/* ============================
+   SLUGIFY
+============================ */
+function slugify(str) {
+  return (str || "")
+    .toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .substring(0, 80);
+}
+
+/* ============================
    FETCH SALESFORCE TOKEN (JWT)
 ============================ */
 async function getSalesforceAccessTokenJWT() {
@@ -69,7 +123,7 @@ async function getSalesforceAccessTokenJWT() {
   const privateKeyPem = readPrivateKeyPemFromEnv();
 
   if (!clientId || !subject || !privateKeyPem) {
-    throw new Error("JWT env vars missing: SF_CLIENT_ID / SF_JWT_SUBJECT / SF_JWT_PRIVATE_KEY");
+    throw new Error("JWT env vars missing: SF_CLIENT_ID / SF_JWT_SUBJECT / SF_JWT_PRIVATE_KEY(_B64)");
   }
 
   const header = { alg: "RS256" };
@@ -95,8 +149,8 @@ async function getSalesforceAccessTokenJWT() {
   });
 
   if (!res.ok) {
-    const txt = await res.text();
-    console.error("Failed to fetch Salesforce JWT token:", txt);
+    const txt = await res.text().catch(() => "");
+    console.error("Failed to fetch Salesforce JWT token:", res.status, txt.slice(0, 800));
     throw new Error("JWT token fetch failed");
   }
 
@@ -112,20 +166,6 @@ async function getSalesforceAccessTokenJWT() {
 }
 
 /* ============================
-   SLUGIFY
-============================ */
-function slugify(str) {
-  return (str || "")
-    .toString()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .substring(0, 80);
-}
-
-/* ============================
    MAIN NETLIFY HANDLER
 ============================ */
 exports.handler = async (event) => {
@@ -134,17 +174,18 @@ exports.handler = async (event) => {
   }
 
   try {
-    /* 1) TOKEN OPHALEN */
+    // 1) JWT token ophalen
     const { access_token, instance_url } = await getSalesforceAccessTokenJWT();
 
-    /* 2) ENDPOINT */
-    const endpointTpl = process.env.MYSOLUTION_JOBS_ENDPOINT || "/services/apexrest/msf/api/job/Get";
+    // 2) Jobs endpoint bepalen
+    const endpointTpl =
+      process.env.MYSOLUTION_JOBS_ENDPOINT || "/services/apexrest/msf/api/job/Get";
 
     const targetUrl = /:\/\/[^/]*\.salesforce\.com/i.test(endpointTpl)
       ? endpointTpl
       : `${instance_url.replace(/\/+$/, "")}/${endpointTpl.replace(/^\/+/, "")}`;
 
-    /* 3) VACATURES OPHALEN */
+    // 3) Vacatures ophalen
     const res = await fetch(targetUrl, {
       method: "GET",
       headers: {
@@ -154,77 +195,89 @@ exports.handler = async (event) => {
     });
 
     if (!res.ok) {
-      const txt = await res.text();
-      console.error("MySolution error:", txt);
+      const txt = await res.text().catch(() => "");
+      console.error("MySolution job GET failed:", res.status, txt.slice(0, 800));
       return {
         statusCode: 502,
         headers: baseHeaders,
-        body: JSON.stringify({ error: "Failed to fetch jobs", details: txt }),
+        body: JSON.stringify({
+          error: "Failed to fetch jobs from MySolution",
+          status: res.status,
+        }),
       };
     }
 
     const data = await res.json();
     const vacatures = Array.isArray(data) ? data : data.records || data;
 
-    /* 4) MAPPEN NAAR JOUW STRUCTUUR */
+    // 4) Mappen naar jouw structuur
     const jobs = vacatures
+      // Optioneel filter: alleen tonen als "Op website tonen" = ja/true
       .filter((v) => {
         const show = v.msf__Show_On_Website__c;
         if (show === undefined || show === null) return true;
         return ["true", true, 1, "1", "ja", "Ja"].includes(show);
       })
       .map((v) => {
+        // Vacaturetitel & ID
         const vacatureId = v.msf__Job__c || v.Id || "";
-        const title = v.vacaturetitel__c || "";
-        const slug = `${slugify(title || "vacature")}-${vacatureId}`;
+        const vacatureTitelRaw = v.vacaturetitel__c || ""; // <<-- HIER komt de titel uit MySolution
+        const vacatureTitel = cleanText(vacatureTitelRaw);
+
+        // Slug alleen op basis van titel
+        const slug = slugify(vacatureTitel || "vacature");
 
         return {
+          // Basisvelden
           id: vacatureId,
           slug,
-          vacatureTitel: title,
+          vacatureTitel,
 
-          /* ---- Velden uit jouw tabel ---- */
+          // Overige velden uit jouw tabel
           opWebsiteTonen: v.msf__Show_On_Website__c,
           vacatureID: v.msf__Job__c,
-          locatie: v.msf__Work_Address_City__c,
-          urenrange: v.FU_Urenrange_per_week__c,
-          salarisMinimum: v.msf__Salary_from__c,
-          salarisMaximum: v.msf__Salary_to__c,
-          headerAfbeelding: v.FU_Header_afbeelding__c,
-          introductie: v.FU_Korte_introductie_Tekst__c,
+          locatie: cleanText(v.msf__Work_Address_City__c),
+          urenrange: cleanText(v.FU_Urenrange_per_week__c),
 
-          jobHighlightTitel1: v.FU_Titel_Job_highlight_1__c,
-          jobHighlightText1: v.FU_Tekst_job_highlight_1__c,
-          jobHighlightTitel2: v.FU_Titel_Job_highlight_2__c,
-          jobHighlightText2: v.FU_Tekst_job_highlight_2__c,
-          jobHighlightTitel3: v.FU_Titel_Job_highlight_3__c,
-          jobHighlightText3: v.FU_Tekst_Job_highlight_3__c,
+          // Salaris met €
+          salarisMinimum: formatCurrencyEUR(v.msf__Salary_from__c),
+          salarisMaximum: formatCurrencyEUR(v.msf__Salary_to__c),
 
-          youGet1: v.FU_you_get_1__c,
-          youGet2: v.FU_you_get_2__c,
-          youGet3: v.FU_you_get_3__c,
-          youGet4: v.FU_you_get_4__c,
-          youGet5: v.FU_you_get_5__c,
+          headerAfbeelding: v.FU_Header_afbeelding__c, // url
+          introductie: cleanText(v.FU_Korte_introductie_Tekst__c),
 
-          youAre1: v.FU_you_are_1__c,
-          youAre2: v.FU_you_are_2__c,
-          youAre3: v.FU_you_are_3__c,
-          youAre4: v.FU_you_are_4__c,
-          youAre5: v.FU_you_are_5__c,
+          jobHighlightTitel1: cleanText(v.FU_Titel_Job_highlight_1__c),
+          jobHighlightText1: cleanText(v.FU_Tekst_job_highlight_1__c),
+          jobHighlightTitel2: cleanText(v.FU_Titel_Job_highlight_2__c),
+          jobHighlightText2: cleanText(v.FU_Tekst_job_highlight_2__c),
+          jobHighlightTitel3: cleanText(v.FU_Titel_Job_highlight_3__c),
+          jobHighlightText3: cleanText(v.FU_Tekst_Job_highlight_3__c),
 
-          logoOpdrachtgever: v.FU_Afbeelding_logo_opdrachtgever__c,
-          overOpdrachtgever: v.FU_Over_de_opdrachtgever__c,
+          youGet1: cleanText(v.FU_you_get_1__c),
+          youGet2: cleanText(v.FU_you_get_2__c),
+          youGet3: cleanText(v.FU_you_get_3__c),
+          youGet4: cleanText(v.FU_you_get_4__c),
+          youGet5: cleanText(v.FU_you_get_5__c),
+
+          youAre1: cleanText(v.FU_you_are_1__c),
+          youAre2: cleanText(v.FU_you_are_2__c),
+          youAre3: cleanText(v.FU_you_are_3__c),
+          youAre4: cleanText(v.FU_you_are_4__c),
+          youAre5: cleanText(v.FU_you_are_5__c),
+
+          logoOpdrachtgever: v.FU_Afbeelding_logo_opdrachtgever__c, // url
+          overOpdrachtgever: cleanText(v.FU_Over_de_opdrachtgever__c),
         };
       });
 
-    /* 5) RETURN JSON */
+    // 5) JSON response
     return {
       statusCode: 200,
       headers: baseHeaders,
       body: JSON.stringify(jobs),
     };
   } catch (err) {
-    console.error("ERROR in get-jobs:", err);
+    console.error("get-jobs error:", err);
     return {
       statusCode: 500,
       headers: baseHeaders,
