@@ -254,7 +254,7 @@ exports.handler = async (event) => {
       });
 
       if (!userRes.ok) {
-        const txt = await userRes.text().catch(() => "");
+        const txt = await userRes.text().catch(() => "";
         console.error("User query failed:", userRes.status, txt.slice(0, 800));
       } else {
         const userJson = await userRes.json();
@@ -346,6 +346,9 @@ exports.handler = async (event) => {
 
           logoOpdrachtgever: v.FU_Afbeelding_logo_opdrachtgever__c,
           overOpdrachtgever: cleanText(v.FU_Over_de_opdrachtgever__c),
+
+          // 🔹 NIEUW veld: WhatsApp share image (URL)
+          whatsappShareImage: v.Whatsapp_share_image__c,
 
           // 🔹 Contactpersoon vanuit User (met foto_website__c)
           contactNaam: recruiter.name || "",
