@@ -254,7 +254,7 @@ exports.handler = async (event) => {
       });
 
       if (!userRes.ok) {
-        const txt = await userRes.text().catch(() => "";
+        const txt = await userRes.text().catch(() => "");
         console.error("User query failed:", userRes.status, txt.slice(0, 800));
       } else {
         const userJson = await userRes.json();
@@ -293,7 +293,7 @@ exports.handler = async (event) => {
       // MAPPING FASE
       .map((v) => {
         const vacatureId = v.msf__Job__c || v.Id || "";
-        // ✅ juiste veld voor vacaturetitel
+        // huidige veld voor vacaturetitel
         const vacatureTitelRaw = v.FU_vacaturetitel__c || "";
         const vacatureTitel = cleanText(vacatureTitelRaw);
 
@@ -313,7 +313,7 @@ exports.handler = async (event) => {
           opWebsiteTonen: v.msf__Show_On_Website__c,
           vacatureID: v.msf__Job__c,
 
-          // ✅ bedrijf vanuit msf__Account__c
+          // bedrijf vanuit msf__Account__c
           bedrijf: cleanText(v.msf__Account__c),
 
           locatie: cleanText(v.msf__Work_Address_City__c),
