@@ -75,21 +75,20 @@ function cleanText(val) {
   return stripHtml(val);
 }
 
+// ⚠️ Nieuw: heel simpele euroformatter, altijd "€ <waarde>" als string
 function formatCurrencyEUR(val) {
-  if (val === null || val === undefined || val === "") return "";
-  const str = String(val).trim();
+  if (val === null || val === undefined) return "";
+  const raw = String(val).trim();
+  if (!raw) return "";
 
-  // Als Salesforce al "€" meestuurt, niets veranderen
-  if (str.includes("€")) return str;
+  // bestaande eurotekens + spaties weghalen
+  const withoutEuro = raw.replace(/€\s*/gi, "").trim();
 
-  // Proberen te parsen als getal
-  const numeric = Number(str.replace(/\./g, "").replace(/,/g, "."));
-  if (!isNaN(numeric)) {
-    return `€ ${numeric}`;
-  }
+  // als er daarna niets over is, gewoon leeg
+  if (!withoutEuro) return "";
 
-  // Fallback: gewoon "€ " ervoor zetten
-  return `€ ${str}`;
+  // altijd als tekst met € ervoor teruggeven
+  return `€ ${withoutEuro}`;
 }
 
 function formatUrenRange(val) {
@@ -265,7 +264,7 @@ exports.handler = async (event) => {
             name: u.Name || "",
             email: u.Email || "",
             phone: u.MobilePhone || u.Phone || "",
-            // 🔹 gebruik foto_website__c, anders fallback naar SmallPhotoUrl
+            // gebruik foto_website__c, anders fallback naar SmallPhotoUrl
             photoUrl: u.foto_website__c || u.SmallPhotoUrl || "",
           };
           return acc;
@@ -293,7 +292,6 @@ exports.handler = async (event) => {
       // MAPPING FASE
       .map((v) => {
         const vacatureId = v.msf__Job__c || v.Id || "";
-        // huidige veld voor vacaturetitel
         const vacatureTitelRaw = v.FU_vacaturetitel__c || "";
         const vacatureTitel = cleanText(vacatureTitelRaw);
 
@@ -313,12 +311,12 @@ exports.handler = async (event) => {
           opWebsiteTonen: v.msf__Show_On_Website__c,
           vacatureID: v.msf__Job__c,
 
-          // bedrijf vanuit msf__Account__c
           bedrijf: cleanText(v.msf__Account_Name__c),
 
           locatie: cleanText(v.msf__Work_Address_City__c),
           urenrange: formatUrenRange(v.FU_Urenrange_per_week__c),
 
+          // ⬇️ altijd als string met "€ "
           salarisMinimum: formatCurrencyEUR(v.msf__Salary_from__c),
           salarisMaximum: formatCurrencyEUR(v.msf__Salary_to__c),
 
@@ -347,10 +345,8 @@ exports.handler = async (event) => {
           logoOpdrachtgever: v.FU_Afbeelding_logo_opdrachtgever__c,
           overOpdrachtgever: cleanText(v.FU_Over_de_opdrachtgever__c),
 
-          // 🔹 NIEUW veld: WhatsApp share image (URL)
           whatsappShareImage: v.Whatsapp_share_image__c,
 
-          // 🔹 Contactpersoon vanuit User (met foto_website__c)
           contactNaam: recruiter.name || "",
           contactEmail: recruiter.email || "",
           contactTelefoon: recruiter.phone || "",
