@@ -235,15 +235,15 @@ exports.handler = async (event) => {
       const recruiterIds = Array.from(recruiterIdSet);
 
       const soql = `
-        SELECT Id, Name, Email, Phone, MobilePhone, SmallPhotoUrl
+        SELECT Id, Name, Email, Phone, MobilePhone, SmallPhotoUrl, foto_website__c
         FROM User
         WHERE Id IN (${recruiterIds.map((id) => `'${id}'`).join(",")})
       `;
 
-      // kies een API versie die bij jullie org past
-      const queryUrl = `${instance_url.replace(/\/+$/, "")}/services/data/v60.0/query?q=${encodeURIComponent(
-        soql
-      )}`;
+      const queryUrl = `${instance_url.replace(
+        /\/+$/,
+        ""
+      )}/services/data/v60.0/query?q=${encodeURIComponent(soql)}`;
 
       const userRes = await fetch(queryUrl, {
         method: "GET",
@@ -265,7 +265,8 @@ exports.handler = async (event) => {
             name: u.Name || "",
             email: u.Email || "",
             phone: u.MobilePhone || u.Phone || "",
-            photoUrl: u.SmallPhotoUrl || "",
+            // 🔹 gebruik foto_website__c, anders fallback naar SmallPhotoUrl
+            photoUrl: u.foto_website__c || u.SmallPhotoUrl || "",
           };
           return acc;
         }, {});
@@ -292,7 +293,8 @@ exports.handler = async (event) => {
       // MAPPING FASE
       .map((v) => {
         const vacatureId = v.msf__Job__c || v.Id || "";
-        const vacatureTitelRaw = v.FU_vacaturetitel__c || "";
+        // ✅ juiste veld voor vacaturetitel
+        const vacatureTitelRaw = v.vacaturetitel__c || "";
         const vacatureTitel = cleanText(vacatureTitelRaw);
 
         const slug = slugify(vacatureTitel || "vacature");
@@ -306,13 +308,14 @@ exports.handler = async (event) => {
           slug,
           vacatureTitel,
 
-          // Nieuwe veld
           statusVacature: cleanText(v.FU_Vacature_vervuld__c),
 
-          // Overige velden
           opWebsiteTonen: v.msf__Show_On_Website__c,
           vacatureID: v.msf__Job__c,
-          bedrijf: cleanText(v.msf__Account_Name__c),
+
+          // ✅ bedrijf vanuit msf__Account__c
+          bedrijf: cleanText(v.msf__Account__c),
+
           locatie: cleanText(v.msf__Work_Address_City__c),
           urenrange: formatUrenRange(v.FU_Urenrange_per_week__c),
 
@@ -344,7 +347,7 @@ exports.handler = async (event) => {
           logoOpdrachtgever: v.FU_Afbeelding_logo_opdrachtgever__c,
           overOpdrachtgever: cleanText(v.FU_Over_de_opdrachtgever__c),
 
-          // 🔹 Contactpersoon vanuit User
+          // 🔹 Contactpersoon vanuit User (met foto_website__c)
           contactNaam: recruiter.name || "",
           contactEmail: recruiter.email || "",
           contactTelefoon: recruiter.phone || "",
