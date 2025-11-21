@@ -346,8 +346,6 @@ exports.handler = async (event) => {
 
           logoOpdrachtgever: v.FU_Afbeelding_logo_opdrachtgever__c,
           overOpdrachtgever: cleanText(v.FU_Over_de_opdrachtgever__c),
-
-          // 🔹 NIEUW veld: WhatsApp share image (URL)
           whatsappShareImage: v.Whatsapp_share_image__c,
 
           // 🔹 Contactpersoon vanuit User (met foto_website__c)
