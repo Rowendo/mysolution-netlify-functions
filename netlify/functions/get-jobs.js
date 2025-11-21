@@ -314,7 +314,7 @@ exports.handler = async (event) => {
           vacatureID: v.msf__Job__c,
 
           // bedrijf vanuit msf__Account__c
-          bedrijf: cleanText(v.msf__Account__c),
+          bedrijf: cleanText(v.msf__Account_Name__c),
 
           locatie: cleanText(v.msf__Work_Address_City__c),
           urenrange: formatUrenRange(v.FU_Urenrange_per_week__c),
